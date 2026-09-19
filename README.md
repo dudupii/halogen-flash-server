@@ -114,7 +114,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.11.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
 ```
 
 That is the whole thing. It fetches the weights on first start (118 GiB, so
@@ -138,7 +138,7 @@ podman run --rm -p 8731:8731 \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.11.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
 ```
 
 The weights repo carries the tokenizer, so one `-v` is all either form needs.
@@ -624,7 +624,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_POOL_POSITIONS=262144 \
   -e HALOGEN_KV_SLOTS=2 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.11.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
 ```
 
 **The smallest footprint at the full context.** The prefill arena halves.
@@ -640,7 +640,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.11.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
 ```
 
 **If 131k of context is enough.** The pool cannot be smaller than one
@@ -656,7 +656,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.11.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
 ```
 
 Two things hold for all of them. The lookup table (the n-gram embedding,
@@ -715,7 +715,20 @@ host-side sort, not the decode kernels. 0.6.0 moves the speculative rows
 twice, and both moves are draft-side: the sidecar now carries the draft
 head's own projections at 8 bits (its proposals are accepted more often), and
 the request's own text is a second draft source (the rows below the served
-one).
+one). **The four 0.12.0 rows are served, through this image, at the 1M
+configuration** (`HALOGEN_ROPE_YARN=4 HALOGEN_CTX=1048576`, which caps the
+prefill arena at 16,384 and turns the prompt cache off): one cold request
+each, synthetic non-compressible text, thinking off, 64 tokens generated,
+the rates the response's `timings` report, and the previous release beside
+each from the same session with the same prompt. Decode there is 64 tokens
+straight after a cold prefill, with the draft head, so it is a served rate
+in that shape (and its first steps read the lookup table from disk, since
+a 1M pool leaves the table little page cache), not the ten-prompt mean the
+32k row is. What moved between the releases is the model's sparse-attention
+indexer: its block select ran serial in the context length on one compute
+unit at decode and was a fifth of a 1M prefill pass, and its scoring kernel
+re-read the block keys once per 16 query rows; both are rewritten in 0.12.0
+with byte-identical results.
 
 | | halogen-flash 0.5.3 |
 |---|---|
@@ -728,6 +741,10 @@ one).
 | decode, serial greedy @ ctx 32,768 | **34.1 tok/s** |
 | decode, MTP speculation @ ctx 1,500 | **44.8 tok/s** prose, **49.9 tok/s** code (0.6.0 sidecar; 42.4 / 48.3 with the 0.5.x sidecar) |
 | decode, MTP speculation @ ctx 32,768, served | **41.7 tok/s** mean over ten prompts |
+| prefill @ 258,794, served, 1M configuration (0.12.0) | **1,114 tok/s** (232 s; 1,086 on 0.11.10) |
+| prefill @ 1,004,581, served, 1M configuration (0.12.0) | **937 tok/s** (17.9 min; 790 and 21.2 min on 0.11.10) |
+| decode, MTP speculation @ ctx 258,794, served, cold (0.12.0) | **45.0 tok/s** (42.9 on 0.11.10) |
+| decode, MTP speculation @ ctx 1,004,581, served, cold (0.12.0) | **38.3 tok/s** (27.3 on 0.11.10) |
 | decode, coding-agent turn, MTP alone (0.6.0 control) | **49.1 tok/s** thinking off, **49.2** thinking on |
 | decode, coding-agent turn, MTP + prompt lookup (0.6.0) | **56.3 tok/s** thinking off, **55.7** thinking on |
 | decode, function-calling turn, MTP + prompt lookup (0.6.0) | **53.1 tok/s** thinking off (48.8 with MTP alone) |
@@ -829,8 +846,8 @@ produced byte-identical output on every case.**
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.11.10 bench serial,mtp 256 low 3
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.11.10 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.0 bench serial,mtp 256 low 3
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.0 sweep -p 8192,32768 -n 128
 ```
 
 ---
@@ -973,7 +990,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_CHECKPOINT=/models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.11.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
 ```
 
 Name any shard of a split; the siblings are found by name. With
@@ -1512,15 +1529,20 @@ on the same machine as the table above:
 - **Memory:** a 1M KV cache is ~25 GB, which on a 128 GB machine leaves no
   room for the default prefill arena. Past the native context the server
   therefore caps `HALOGEN_MAX_TOK` at 16384 (prefill about 9% slower) and
-  prints it. A 1,000,000-token prompt prefills in 22-24 minutes (~700-770
-  tok/s) and decodes at 19 tok/s serial, 25 with the default speculative
-  drafter. The conversation then continues at ordinary speed: the prompt
-  cache keeps the attention state in place and saves only its small
-  position-free part, so a follow-up turn at 1,000,000 tokens reached its
-  first token in 0.55 s on the test machine (0.45 s at 262,144), against
-  22-24 minutes cold. A 262,144-token prompt decodes at ~28. The context
-  must leave room for the generation: a prompt at exactly the context is
-  refused.
+  prints it. Since 0.12.0 a 1,004,581-token prompt prefills in 17.9
+  minutes (937 tok/s, served, cold) and decodes at 38 tok/s with the
+  default speculative drafter, 32 serial in the engine's own harness; on
+  0.11.10 the same request took 21.2 minutes and decoded at 27 (19 serial),
+  and 0.2.0's figure was 22-24 minutes and 19 serial. A 258,794-token
+  prompt prefills at 1,114 tok/s and decodes at 45 with the drafter (35
+  serial in the harness; ~28 before 0.12.0). Decode at depth now costs what
+  reading every block's key costs, about 3.6 ms a step at 1M, on top of the
+  short-context step. The conversation then continues at ordinary speed
+  where the prompt cache is on: it keeps the attention state in place and
+  saves only its small position-free part, so a follow-up turn at
+  1,000,000 tokens reached its first token in 0.55 s on the test machine
+  (0.45 s at 262,144), against the cold prefill. The context must leave
+  room for the generation: a prompt at exactly the context is refused.
 
 ### Attention budget: opt-in, and a different configuration
 

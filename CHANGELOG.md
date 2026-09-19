@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.12.0
+
+Engine only, two kernels of the model's sparse-attention indexer. No weight
+change, no new setting. Byte-identical output: the block lists and the scores
+both kernels produce are compared bit for bit against the previous kernels at
+32k, 262k and 1M tokens (serial and with the draft head), and the logits of a
+32,768-token prefill and two decode fixtures are identical; every published
+quality number is unmoved. What moves is speed at long context, on both the
+decode and the prefill side. The numbers below are the engine's own harness on
+the reference machine (quality sidecar, the tuned plan, a 1,044,480-token
+prompt at the 1M configuration with `HALOGEN_MAX_TOK=16384`, a 258,048-token
+prompt at the default 32,768 arena); the served figures through this image are
+in the README's 1M section.
+
+### Fixed
+
+- **Decode at long context was paying for the indexer's block SELECT, not its
+  scores.** Each layer's indexer scores every 4-token block of the context and
+  keeps the top 512. The select ran as one workgroup per query row walking
+  every visible block, which at prefill is thousands of rows in parallel and
+  invisible, and at decode is one workgroup per layer, serial in the number
+  of blocks: 5.2 ms of a 33 ms step at 262k and 22 ms of a 53 ms step at 1M,
+  which is the whole of the decode slope [@nightvich](https://huggingface.co/nightvich)
+  measured on the model's Hugging Face thread (42 tok/s at 11k to 16 at 937k
+  on 0.11.1). The select is now a register-resident bisection over slices of
+  the row, spread across the GPU, with the same result: the same blocks, the
+  same tie rule, the same order. Serial decode 30.0 -> 35.2 tok/s at 262k and
+  18.9 -> 32.1 at 1M; with the draft head 43.5 -> 49.4 and 27.2 -> 41.7. What is
+  left of the depth term at decode is the block-key read itself (768 MiB a
+  step at 1M, at the memory roofline), 3.6 ms a step.
+- **Prefill at 1M was paying twice for the same indexer.** The select above
+  was 18% of a 1M prefill pass, and the scoring kernel another 13% at a
+  quarter of the matrix units' rate, because it re-read the whole key set
+  once per 16 query rows. The scoring kernel now keeps 128 block keys per
+  workgroup in registers and walks the query rows, with the same products
+  in the same order. A 1,044,480-token prefill: 1,191 -> 994 s (877 -> 1,051
+  tok/s); a 258,048-token prefill 204 -> 199 s; 32k unchanged.
+
+### Documentation
+
+- The README's 1M section carries the served rates at 262k and 1M measured
+  through this image.
+
 ## 0.11.10
 
 ### Added
@@ -430,9 +473,9 @@
   The next image request on the same slot whose table fit that size reused
   the dropped buffer: `HIP flash_model.hip:4510: invalid argument`, the
   engine exited, the client got `502 engine closed the connection`, and the
-  container restarted. The order was text → image → text → image, which is
+  container restarted. The order was text -> image -> text -> image, which is
   any client that sends a text-only side request (a chat title, a summary,
-  a sub-agent) between image turns; text → image → image → text was fine,
+  a sub-agent) between image turns; text -> image -> image -> text was fine,
   and 0.10.0 was fine. The clear now keeps the buffer, as the 0.5.0 reset
   path already did. The release gate's vision cell runs the reporter's
   order and the control order on one server and checks both image answers.
@@ -447,7 +490,7 @@
   turn continues from where the recap branched. Since 0.8.1 a conversation
   kept one history entry in the prompt cache, the newest, and the recap's
   store replaced the one the conversation needed; the next turn matched only
-  the system prompt (`161006 cached` → `19528 cached`, a 146k-token
+  the system prompt (`161006 cached` -> `19528 cached`, a 146k-token
   re-prefill, 179 s), and every recap after the first did the same. A
   conversation now keeps its two most recently *used* history entries
   beside the system-prompt entry; the side turn hits and refreshes the true
