@@ -39,7 +39,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
 ```
 
 - On Docker, `--group-add keep-groups` is `--group-add video --group-add render`.
@@ -86,11 +86,21 @@ whether it starts and how it behaves:
   sidecar beside the checkpoint). Without it an image is a 400 naming the
   flag.
 - **The prompt cache is on** (`HALOGEN_PROMPT_CACHE=2`): a follow-up turn
-  prefills only its new tokens. An answer that resumes from the cache is
+  prefills only its new tokens. It saves its place at the end of the
+  system prompt, at the start of the request's last message (0.12.1: a
+  document in one message and a new question in the next hits) and at the
+  end of the request. An answer that resumes from the cache is
   not always byte-identical to a cold one; `=1` saves only at fixed
   checkpoints and is, for evaluation and regression suites.
   `HALOGEN_CACHE_DIR` keeps the cache across a restart;
   `HALOGEN_CACHE_PRUNE_OLD=1` removes other builds' subtrees there at startup.
+- **A llama.cpp GGUF of this model is a checkpoint too** (`HALOGEN_CHECKPOINT`
+  names any shard; the draft head file comes from `HALOGEN_MTP_HEAD` or
+  `HALOGEN_DOWNLOAD`): repacked in RAM at every start, losslessly, in about
+  20 s. Since 0.12.1 every tensor type the engine reads is read on every
+  tensor, so bartowski's and mradermacher's IQ4_XS load as unsloth's do;
+  `convert IN.gguf OUT.hgn` as the container's command writes the repack
+  out once as a standalone checkpoint.
 - **This server holds most of a 128 GB host.** Read the startup line `host
   memory left for everything else` and believe it: `free` and `MemAvailable`
   overstate free memory by about 68 GiB, the size of the locked weights.

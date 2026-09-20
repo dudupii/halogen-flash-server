@@ -114,7 +114,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
 ```
 
 That is the whole thing. It fetches the weights on first start (118 GiB, so
@@ -138,7 +138,7 @@ podman run --rm -p 8731:8731 \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
 ```
 
 The weights repo carries the tokenizer, so one `-v` is all either form needs.
@@ -624,7 +624,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_POOL_POSITIONS=262144 \
   -e HALOGEN_KV_SLOTS=2 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
 ```
 
 **The smallest footprint at the full context.** The prefill arena halves.
@@ -640,7 +640,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
 ```
 
 **If 131k of context is enough.** The pool cannot be smaller than one
@@ -656,7 +656,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
 ```
 
 Two things hold for all of them. The lookup table (the n-gram embedding,
@@ -846,8 +846,8 @@ produced byte-identical output on every case.**
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.0 bench serial,mtp 256 low 3
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.0 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.1 bench serial,mtp 256 low 3
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.1 sweep -p 8192,32768 -n 128
 ```
 
 ---
@@ -990,7 +990,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_CHECKPOINT=/models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
 ```
 
 Name any shard of a split; the siblings are found by name. With
@@ -1002,15 +1002,62 @@ put both beside the GGUF yourself and mount the volume read-only.
 
 **Which files.** The repack is lossless where the format's values are a
 small set times a per-block scale, which is the whole `IQ4_NL` / `IQ4_XS` /
-`IQ3_S` / `Q4_0` family for the experts, `Q8_0` for the dense layers and
-`Q6_K` for the output projection; that is unsloth's `UD-IQ4_XS` build exactly
-(the file most numbers below were measured on), and any `llama-quantize`
-output in those types. Since 0.11.6 the engine reads the K-quant blocks
-`Q4_K`, `Q5_K` and `Q5_1` the same way, as their exact affine planes, which
-is unsloth's `UD-Q4_K_XL` build. Only `Q4_1`, `Q5_0`, `Q2_K`, `Q3_K` and the
-IQ2/IQ1 families are **refused by name at startup**, before anything is
-loaded, because reading them needs kernels for their block layouts rather
-than a repack, and a lossy fallback would make "the same file" untrue.
+`IQ3_S` / `Q4_0` family, `Q8_0`, `Q6_K`, and since 0.11.6 the K-quant
+blocks `Q4_K`, `Q5_K` and `Q5_1` as their exact affine planes. Through
+0.12.0 those types were read on some tensors and not others: the three
+linear-attention projections of each DeltaNet layer (`attn_qkv`,
+`attn_gate`, `ssm_out`) had to be `Q8_0`, `Q6_K` was read on the output
+projection only, and the K-quants on the experts only, which is unsloth's
+bit map (`UD-IQ4_XS`, `UD-Q4_K_XL`) and nobody else's: bartowski's and
+mradermacher's IQ4_XS files were refused by name on their first DeltaNet
+tensor (issue #20, the census by @Syakyr). **Since 0.12.1 every one of those
+types is read on every tensor**, so bartowski's `IQ4_XS` loads as it is
+(measured below), and so does any `llama-quantize` output in those types
+with one exception: a K-quant or `Q6_K` on `ssm_out` is refused, because
+the engine reorders that tensor's columns in 128-wide blocks at load and
+those formats' scale groups are 256 wide (bartowski's `Q4_K_M` has that
+shape, and `Q5_0` on its down experts besides; his `IQ4_XS` and `IQ4_NL`
+do not). `Q4_1`, `Q5_0`, `Q2_K`,
+`Q3_K` and the IQ2/IQ1 families stay **refused by name at startup**, before
+anything is loaded, because reading them needs kernels for their block
+layouts rather than a repack, and a lossy fallback would make "the same
+file" untrue.
+
+One of the newly read cases costs something and the log says so. A
+K-quant (`Q4_K` / `Q5_K`) on a dense tensor rather than an expert has no
+decode kernel of its own yet; the engine reads it losslessly and then
+keeps a bf16 copy of it on the GPU (`affine trunk: N tensors staged to
+bf16 on the device (X GiB)` at startup), which decode reads at 16 bits a
+weight instead of 4.5 or 5.5. bartowski's `IQ4_XS` has twelve such tensors
+(the attention output projections, 0.35 GiB); mradermacher's `i1-IQ4_XS`
+has forty-eight, including the largest DeltaNet projection of every layer
+(1.8 GiB). The kernel that removes this is on the list; the numbers below
+include the cost as it stands.
+
+**bartowski's `IQ4_XS` and mradermacher's `i1-IQ4_XS`, measured** (0.12.1,
+the reference machine, unsloth's `UD-IQ4_XS` in the same session as the
+control, MTP on in all three; the shipped checkpoint's own numbers are in
+the table above):
+
+| | unsloth UD-IQ4_XS | bartowski IQ4_XS | mradermacher i1-IQ4_XS |
+|---|---|---|---|
+| on disk | 94 GB, 3 shards | 91 GB, 3 shards | 91 GB, 1 file |
+| held in RAM (repacked weights, head included) | 72 GiB | **68 GiB** | **68 GiB** |
+| dense layers | 8-bit | 4-bit (+ 6 `Q6_K`, 12 `Q5_K`) | 4-bit (+ 48 `Q5_K`) |
+| experts | IQ3_S / IQ4_NL | IQ4_XS / IQ4_NL | IQ4_XS / IQ4_NL |
+| fixture agreement with transformers | 185/192 | 185/192 | 182/192 |
+| perplexity, 32K tokens | 5.577 | 5.634 (+1.0%) | not run |
+| prefill 8,192 / 32,768 tok/s | 1,237-1,239 / 1,420-1,422 | 1,244-1,267 / 1,423-1,425 | not run |
+| decode, serial, short context | 26.0-27.1 tok/s | 26.1-32.2 | 30.1 |
+| decode, draft head, short context | 27.9-30.2 (45% accepted) | 33.2-35.9 (51%) | 35.8 (53%) |
+| speculative streams byte-identical to serial | yes | yes | yes |
+| startup repack, cold disk | 20 s | 18 s | 6 s (warm page cache) |
+
+The two 4-bit-trunk files read a gigabyte less per token than unsloth's
+8-bit trunk and decode faster for it, staged tensors included; their
+perplexity is a little higher for the same reason. Every one of these
+files gets the same identity property: whichever drafter runs, the tokens
+are serial greedy's.
 
 The small tensors that unsloth keeps at F32 come out of other quantizers at
 F16 (bartowski's and orcarouter's IQ4_XS files carry one,
@@ -1101,8 +1148,38 @@ ignored, both said in the log. `/health` reports `checkpoint_format` as
 and is not loaded over a GGUF trunk (the log says so). The draft head is ours
 and was fitted to our trunk; on unsloth's it accepts fewer draft tokens on
 prose (45% against 59%) and the same on code, which is inside the decode
-numbers above. `flash_serve --repack IN.gguf --out OUT.hgn` writes the same
-repack to a file for anyone who wants the artifact.
+numbers above.
+
+### Convert a GGUF once
+
+Since 0.12.1 the image has a `convert` mode that writes the same lossless
+repack to disk as a complete checkpoint of the engine's own kind, with the
+lookup table and the draft head folded in, and exits:
+
+```bash
+podman run --rm \
+  --device /dev/kfd --device /dev/dri --group-add keep-groups \
+  --ipc=host --ulimit memlock=-1:-1 \
+  -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
+  -v ~/gguf-models:/models \
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.1 \
+  convert /models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf /models/flash-next-iq4xs.hgn
+```
+
+Name any shard as the input; the output is one file, about 106 GB for an
+IQ4_XS build (the repacked weights plus the 27 GB lookup table), written in
+about ten minutes on the reference machine's NVMe. It needs the draft head
+as a GGUF start does (`HALOGEN_MTP_HEAD`, or beside the GGUF, or fetched
+with `HALOGEN_DOWNLOAD` and a writable volume). Then start the server on it
+with `HALOGEN_CHECKPOINT=/models/flash-next-iq4xs.hgn` and no GGUF beside
+it: the start is the engine's own checkpoint path (`checkpoint_format: hgn`
+on `/health`; the log notes that it is a converted trunk and that the
+quality sidecar does not apply), which loads in seconds from a warm disk
+instead of repacking at every start, and the file can move to any machine
+that runs this image. Nothing in it is requantized: byte for byte it is
+what a GGUF start builds in RAM, so the outputs are the same. The command
+is the engine's `flash_serve --repack IN.gguf --out OUT.hgn --with-table`
+with the head and the checks around it.
 
 ---
 
@@ -1132,7 +1209,7 @@ decides which, and there are three settings.
 
 | | what it does | follow-up turn at 100k | repeat answers identical? |
 |---|---|---|---|
-| **`2`** *(default)* | Saves its place at the end of every request | **~2 s** | no |
+| **`2`** *(default)* | Saves its place at the end of the system prompt, at the start of the last message and at the end of every request | **~2 s** | no |
 | `1` | Saves its place only at fixed checkpoints | ~17 s typical, ~32 s worst | **yes** |
 | `0` | Never saves its place | ~88 s | yes |
 
@@ -1144,9 +1221,16 @@ gets longer. It is the only setting that helps short conversations: at the
 shipped configuration, mode `1` saves nothing at all until a conversation passes
 32,768 tokens, so ordinary chat gets no benefit from it. The default has no such
 threshold; it starts working on the second turn, whatever the length. The first
-turn costs a little more, the price of capturing the state mid-pass: about 1%
-of the prefill with an ordinary system prompt and about 3.5% with a 20,000-token
-one (measured on a 32k prompt), paid once per new saved point, never on a hit.
+request on a new prompt costs a little more than it would with the cache off,
+the price of saving the state: about 1 to 2% of its prefill at any length
+(a fixed 0.15 s or so on the reference machine, mostly the two saves
+themselves), paid once per new prompt, never on a hit. From 0.11.3 to
+0.12.0 that first request cost about 5% instead, at every length, because
+the save re-ran part of the model over the prompt; 0.12.1 records the state
+as the pass goes by (the changelog has the numbers and the credit). To
+reproduce a cache-off benchmark figure, set `HALOGEN_PROMPT_CACHE=0`; the
+default's first-request cost is what a benchmark that sends every prompt
+once measures, and its second-turn saving is what a conversation measures.
 
 **Use `1` when you need the same prompt to always give the same answer**:
 evaluation suites, regression tests, A/B comparisons, or anything audited. With
@@ -1185,12 +1269,25 @@ a narrower and more useful promise than it first appears.
 **Use `0` for many short unrelated prompts.** Nothing is shared between them, so
 saving state is pure overhead.
 
-**One case where `1` genuinely wins on speed:** one long shared prefix followed
-by many *different short* questions, such as a fixed system prompt or document asked
-about repeatedly from scratch. Mode `1` checkpoints at a fixed position all of
-those questions can resume from. The default saves its place at the end of each
-request and cannot rewind, so it misses. If that is your workload, `1` is both
-faster and stricter.
+**A long document, then a different question each time.** A client that
+keeps a document in one message and asks each new question in the next
+(`[document][question 1]`, then `[document][question 2]`) used to miss under
+the default: the saved places were the end of the system prompt and the end
+of the previous request, and a new question matched neither, so every
+question re-read the document and only an exact repeat was served from the
+cache (a 1M-context reader on the Hub saw exactly this, and the advice then
+was to put the document in the `system` message, which still works). Since
+0.12.1 the default also saves its place at the **start of the last message**
+of the request, so the second question resumes from the end of the document:
+measured on a 30,000-token document, the second question is served 99%
+from the cache and answers in 1.3 s where it took 26 s cold. The extra
+save costs nothing measurable (the state is recorded as the pass goes by,
+see the first-request cost above) and nothing on a hit; a request whose
+last message is its only message has nothing behind it and gets no third
+place. `HALOGEN_CACHE_SNAP3=0` turns it
+off. With that, mode `1`'s remaining advantage is the strict one: an answer
+served from the cache under `1` is byte-for-byte the cold answer, under the
+default it usually is.
 
 ### Context and memory: one KV pool, several conversations
 
@@ -1307,16 +1404,17 @@ drafter, which is the default, speculates while it is the only conversation
 generating and joins the batch as soon as another one is active, so it never
 holds the others back; prompt lookup rides with it and follows the same rule.
 
-The prompt cache keeps sixteen entries (`HALOGEN_CACHE_ENTRIES`), four per
-conversation: one at the end of its system prompt, two at ends of its
-history, and since 0.11.3 one at the end of its last request, which serves
-an exact repeat of that request without reading anything again
-(`HALOGEN_CACHE_FULL=0` turns that one off). Since 0.8.1 a conversation holds a fixed number of entries: a new
+The prompt cache keeps twenty entries (`HALOGEN_CACHE_ENTRIES`; sixteen
+before 0.12.1), five per conversation: one at the end of its system prompt,
+three at points in its history (the ends of earlier requests, and since
+0.12.1 the start of the last message, above), and since 0.11.3 one at the
+end of its last request, which serves an exact repeat of that request
+without reading anything again (`HALOGEN_CACHE_FULL=0` turns that one off). Since 0.8.1 a conversation holds a fixed number of entries: a new
 turn's history entry replaces an older one rather than adding to the list,
 so a long tool-calling session cannot push other sessions out (before that,
 eight tool calls in one session evicted every other conversation, issue #54;
-the count shows as `superseded` on `/cache`). Since 0.11.0 it keeps the two
-most recently *used* history entries, not the newest two, because of a
+the count shows as `superseded` on `/cache`). Since 0.11.0 it keeps the
+most recently *used* history entries, not the newest, because of a
 client pattern that the newest-only rule broke (issue #61): a harness that
 sends the whole history plus a side question (oh-my-pi's idle recap does)
 and then drops that turn from its history continues from where the side
@@ -1327,7 +1425,7 @@ real turn hits the true one again. Conversations taking turns each resume
 from their own state, and requests that share a system prompt and ask
 different things, together or in turn, resume from it as well. More than
 four deep conversations at once wants `HALOGEN_CACHE_ENTRIES` raised to
-four per conversation (about 111 MiB of host RAM each, and the KV rows an
+five per conversation (about 115 MiB of host RAM each, and the KV rows an
 entry covers stay reserved while it exists). The server prints the memory
 budget at startup and warns before the allocator refuses.
 

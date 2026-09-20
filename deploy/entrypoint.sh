@@ -35,6 +35,15 @@
 #            `sweep -p 512,2048,8192 -n 128 -d serial,mtp -r 3`.
 #            `bench` answers "how fast in practice", `sweep` answers "how does
 #            this compare at a fixed size". They are not interchangeable.
+#   convert  (0.12.1) write a llama.cpp GGUF as the engine's own .hgn and
+#            exit: `convert IN.gguf OUT.hgn`. The same lossless repack the
+#            engine runs in RAM at every GGUF start, with the n-gram table and
+#            the draft head folded in, so OUT.hgn is a complete checkpoint
+#            (HALOGEN_CHECKPOINT=OUT.hgn starts in seconds from a warm disk
+#            and needs no GGUF beside it). Needs the draft head as a GGUF
+#            start does (HALOGEN_MTP_HEAD, or beside the GGUF, or
+#            HALOGEN_DOWNLOAD). No engine, no port. About 10 minutes and
+#            ~105 GiB on the reference machine for an IQ4_XS build.
 #
 # The engine's token protocol has NO AUTH. In `all` it binds loopback INSIDE
 # the container and is unreachable from outside; only the API port is
@@ -174,7 +183,7 @@ kv_budget_note() {
   # The prompt cache (HALOGEN_PROMPT_CACHE, default on) keeps the KV in
   # place and holds ~115 MiB of O(1) state; with HALOGEN_CACHE_INPLACE=0 it
   # holds a second copy of one slot's state and the budget is kv + one slot.
-  cache_gib=$(awk -v c="$ENG_CTX" -v on="${HALOGEN_PROMPT_CACHE:-2}" -v ip="${HALOGEN_CACHE_INPLACE:-1}" -v f="${HALOGEN_CACHE_FILE:-}" -v n="${HALOGEN_CACHE_ENTRIES:-16}" 'BEGIN{printf "%.1f", (on==0 || f!="")?0:(ip!="0"?n*115*1048576/1073741824:c*26624/1073741824)}')
+  cache_gib=$(awk -v c="$ENG_CTX" -v on="${HALOGEN_PROMPT_CACHE:-2}" -v ip="${HALOGEN_CACHE_INPLACE:-1}" -v f="${HALOGEN_CACHE_FILE:-}" -v n="${HALOGEN_CACHE_ENTRIES:-20}" 'BEGIN{printf "%.1f", (on==0 || f!="")?0:(ip!="0"?n*115*1048576/1073741824:c*26624/1073741824)}')
   avail_gib=$(awk '/MemAvailable/{printf "%.1f", $2/1048576}' /proc/meminfo 2>/dev/null || echo "?")
   # PUBLIC ISSUE #10: WHAT THE HOST IS ALREADY CARRYING. The pool sizing reads
   # MemTotal and reserves a fixed amount for the OS plus the lookup table's
@@ -505,13 +514,12 @@ is_gguf_path() { case "$HALOGEN_CHECKPOINT" in *.gguf) return 0;; esac; return 1
 is_gguf() {
   [ -f "$HALOGEN_CHECKPOINT" ] && [ "$(head -c 4 "$HALOGEN_CHECKPOINT" 2>/dev/null)" = "GGUF" ]
 }
-check_gguf() {
-  local dir; dir="$(dirname "$HALOGEN_CHECKPOINT")"
+# The draft head a GGUF trunk runs with (and `convert` folds in): beside the
+# GGUF, or HALOGEN_MTP_HEAD, or fetched from HALOGEN_DOWNLOAD. Exports
+# HALOGEN_MTP_HEAD. $1 = the GGUF's directory.
+need_head() {
+  local dir="$1"
   local head="${HALOGEN_MTP_HEAD:-$dir/qwen38-flash-next-mtp.hgn}"
-  echo "halogen: $HALOGEN_CHECKPOINT is a GGUF: it is repacked into RAM at startup, losslessly, on every start"
-  echo "         (about 20 s from a cold NVMe disk on the reference machine, 9 s warm; HALOGEN_GGUF_CACHE=1 keeps"
-  echo "         a copy beside it and a warm restart is then about 1 s) and served with the engine's own draft"
-  echo "         head. The quality sidecar does not apply to a GGUF trunk."
   if [ ! -f "$head" ]; then
     if [ -n "${HALOGEN_DOWNLOAD:-}" ] && [ -w "$dir" ]; then
       echo "halogen: fetching the draft head $(basename "$head") from $HALOGEN_DOWNLOAD (1.4 GiB)"
@@ -536,6 +544,14 @@ check_gguf() {
   fi
   export HALOGEN_MTP_HEAD="$head"
   echo "halogen: draft head $head ($(du -h "$head" | cut -f1))"
+}
+check_gguf() {
+  local dir; dir="$(dirname "$HALOGEN_CHECKPOINT")"
+  echo "halogen: $HALOGEN_CHECKPOINT is a GGUF: it is repacked into RAM at startup, losslessly, on every start"
+  echo "         (about 20 s from a cold NVMe disk on the reference machine, 9 s warm; HALOGEN_GGUF_CACHE=1 keeps"
+  echo "         a copy beside it and a warm restart is then about 1 s; \`convert\` writes it as a standalone .hgn)"
+  echo "         and served with the engine's own draft head. The quality sidecar does not apply to a GGUF trunk."
+  need_head "$dir"
   case "${HALOGEN_GGUF_CACHE:-}" in
     ""|0) : ;;
     1) echo "halogen: HALOGEN_GGUF_CACHE=1: the repack is written once beside the GGUF (about 70 GiB for an 8-bit trunk) and read on later starts" ;;
@@ -621,6 +637,14 @@ check_sidecar() {
         return 0 ;;
   esac
   local side="${HALOGEN_CHECKPOINT%.hgn}.overlay.hgn"
+  # 0.12.1: a `convert`ed GGUF trunk carries the GGUF model id in its header
+  # (bytes 40..103 of the .hgn); the sidecar is the w4b checkpoint's and
+  # does not apply to it, so the warning below would be wrong here.
+  local mid; mid="$(head -c 104 "$HALOGEN_CHECKPOINT" 2>/dev/null | tail -c 64 | tr -d '\0')"
+  case "$mid" in *gguf*)
+    echo "halogen: $HALOGEN_CHECKPOINT is a converted GGUF trunk (model id $mid): the quality sidecar does not apply and none is looked for"
+    return 0 ;;
+  esac
   if [ -f "$side" ]; then
     echo "halogen: quality sidecar present ($(du -h "$side" | cut -f1)) at $side"
     update_sidecar "$side"
@@ -1120,5 +1144,34 @@ except Exception: sys.exit(1)" 2>/dev/null && { API_UP=1; break; }
   kill -TERM "$API_PID" "$ENGINE_PID" 2>/dev/null || true
   exit $RC
   ;;
-*) echo "usage: entrypoint.sh [all|engine|api|bench|sweep]" >&2; exit 2 ;;
+convert)
+  # 0.12.1: GGUF -> .hgn on disk, the runtime repack with a file sink. No
+  # model is loaded and no port is bound; the process is the repack and
+  # exits with its status. IN is any shard of a split GGUF (the siblings are
+  # found by name beside it); OUT is written whole, with the table and the
+  # draft head, so it is a checkpoint on its own.
+  IN="${2:-}"; OUT="${3:-}"
+  if [ -z "$IN" ] || [ -z "$OUT" ]; then
+    echo "usage: entrypoint.sh convert IN.gguf OUT.hgn" >&2
+    echo "  IN: any shard of a llama.cpp GGUF of Qwen3.8-Flash-Next (unsloth's, bartowski's, your own llama-quantize)." >&2
+    echo "  OUT: the .hgn to write (about 105 GiB for an IQ4_XS build; the table and the draft head are folded in)." >&2
+    exit 2
+  fi
+  [ -f "$IN" ] || { echo "halogen convert: $IN is not there (mount the models volume and name a file inside it)" >&2; exit 1; }
+  [ "$(head -c 4 "$IN" 2>/dev/null)" = "GGUF" ] || { echo "halogen convert: $IN is not a GGUF (its first bytes are not GGUF)" >&2; exit 1; }
+  OUTDIR="$(dirname "$OUT")"
+  [ -d "$OUTDIR" ] && [ -w "$OUTDIR" ] || { echo "halogen convert: cannot write into $OUTDIR (is the volume mounted read-write?)" >&2; exit 1; }
+  need_head "$(dirname "$IN")"
+  echo "halogen convert: $IN -> $OUT (the table and the draft head folded in; a few minutes to ten on an NVMe disk)"
+  /usr/local/bin/flash_serve --repack "$IN" --out "$OUT" --with-table --head "$HALOGEN_MTP_HEAD"
+  RC=$?
+  if [ "$RC" -eq 0 ]; then
+    echo "halogen convert: done. Start the image with HALOGEN_CHECKPOINT=$OUT (no GGUF is needed beside it;"
+    echo "  the quality sidecar does not apply to a converted trunk, and none is looked for)."
+  else
+    echo "halogen convert: the repack failed (rc=$RC); $OUT is not usable and can be removed" >&2
+  fi
+  exit $RC
+  ;;
+*) echo "usage: entrypoint.sh [all|engine|api|bench|sweep|convert IN.gguf OUT.hgn]" >&2; exit 2 ;;
 esac

@@ -1,5 +1,120 @@
 # Changelog
 
+## 0.12.1
+
+Engine, front end, entrypoint and docs. No weight change. Three things
+reported on the model's Hugging Face thread and on issue #20 (one of them
+a speed regression that had stood since 0.11.3), the door that turns a
+GGUF into a checkpoint of the engine's own, and two small owed items.
+Every number below is the reference machine, the same session as its
+control.
+
+### Added
+
+- **Third-party GGUFs load: the DeltaNet projections in any row format**
+  (issue #20, the census by [@Syakyr](https://github.com/Syakyr)).
+  The engine reorders the linear-attention heads of every DeltaNet layer at
+  load, and through 0.12.0 that reorder was implemented for `Q8_0` rows
+  only, so `attn_qkv`, `attn_gate` and `ssm_out` had to be `Q8_0`: unsloth's
+  bit map and nobody else's, and bartowski's and mradermacher's IQ4_XS files
+  were refused by name on their first DeltaNet tensor. The reorder now runs
+  on the decoded planes of every format the engine reads (whole rows, or
+  whole 32-wide chunks of `ssm_out`'s columns), which is exact: gguf-py's
+  own dequant of the source, permuted, matches the repacked planes on every
+  tensor of bartowski's file (2^-11 relative on IQ4_XS, the scale's f16
+  rounding; 0 on the rest), and the C++ repack and the Python reference
+  produce identical bytes. Two more lifts the same file needed: `Q6_K` is
+  read on any tensor (it was the output projection only; the kernels were
+  already general), and a K-quant (`Q4_K` / `Q5_K`) on a dense tensor is
+  read and then kept as a bf16 copy on the GPU, since the affine decode
+  kernels exist for the experts only; the log says how many and how much
+  (`affine trunk: 12 tensors staged to bf16 on the device (0.35 GiB)` on
+  bartowski's IQ4_XS). unsloth's two files repack to the same bytes as
+  before, to the hash. bartowski's `IQ4_XS` (91 GB, three shards), measured
+  beside unsloth's `UD-IQ4_XS` in one session: fixture agreement with
+  transformers 185/192 on both; perplexity over 32K tokens 1.0% higher
+  (5.634 against 5.577; its dense layers are 4-bit where unsloth's are
+  8-bit, its experts IQ4_XS where unsloth's are IQ3_S); prefill within 1%
+  (1,244-1,267 / 1,423-1,425 tok/s at 8,192 / 32,768); serial decode at
+  short context 26.1-32.2 tok/s against 26.0-27.1 (a 4-bit trunk is a
+  gigabyte less to read a token), with the draft head 33.2-35.9 against
+  27.9-30.2 and every speculative stream byte-identical to serial. It holds
+  68 GiB in RAM with the head. mradermacher's `i1-IQ4_XS` (91 GB, one file; `Q5_K` on
+  every DeltaNet input projection, 48 staged tensors, 1.8 GiB) loads the
+  same way: fixture agreement 182/192, serial decode 30.1 tok/s, with the
+  draft head 35.8, byte-identical to serial. What is still refused: a K-quant or `Q6_K` on `ssm_out` (the
+  column reorder would split their 256-wide scale groups; bartowski's
+  `Q4_K_M` and up), and `Q4_1` / `Q5_0` / `Q2_K` / `Q3_K` / IQ2 / IQ1 as
+  before.
+- **`convert`: a GGUF as a checkpoint of the engine's own, once.**
+  `podman run ... halogen-flash-server:0.12.1 convert IN.gguf OUT.hgn`
+  writes the lossless repack the engine builds in RAM at every GGUF start
+  to disk as one file, with the lookup table and the draft head folded in
+  (about 106 GB for an IQ4_XS build, ten minutes on an NVMe disk), and
+  exits. A server started on that file takes the engine's own checkpoint
+  path (`checkpoint_format: hgn`), loads in seconds from a warm disk, needs
+  no GGUF beside it, and answers what the GGUF start answers. The log notes
+  a converted trunk and that the quality sidecar does not apply to it.
+- **A third saved place for the prompt cache: the start of the last
+  message** ([@nightvich](https://huggingface.co/nightvich)'s 1M sweep on
+  the Hugging Face thread, where every new question behind the same
+  document read as cold). The default cache mode saved its place at the
+  end of the system prompt and the end of the previous request; a client
+  that keeps a document in one message and asks each new question in the
+  next matched neither, so every question re-read the document and only an
+  exact repeat hit. The cache now also saves at the start of the request's
+  last message, when that message is not the request's only one: on a
+  30,000-token document the second question is served 99% from the cache
+  and answers in 1.3 s where it took 26 s. The extra save costs nothing
+  measurable on the first request (see the fix below) and nothing on a
+  hit; a one-message request gets no third place; conversations that
+  extend their history each turn were served already and do not change.
+  `HALOGEN_CACHE_SNAP3=0` turns it off; `HALOGEN_CACHE_ENTRIES` defaults to
+  20 (was 16), five per conversation. A cold request and an exact repeat
+  stay byte-identical to what 0.12.0 produced.
+
+### Fixed
+
+- **Every cold prefill under the default cache mode had lost about 5%
+  since 0.11.3** ([@rekillkos](https://huggingface.co/rekillkos) measured
+  it on the Hugging Face thread: `halogen-bench.py`, three runs a version,
+  pp8192 1,381 -> 1,300 tok/s and pp32768 1,565 -> 1,496 at 0.11.2 ->
+  0.11.3, held through 0.12.0). Since 0.11.3 the cache captures its save
+  point at the end of the conversation history without splitting the
+  prefill (the split was issue #65's wrong answers), and the capture
+  reached the state at that point by re-running the linear-attention
+  recurrence over the prompt up to it, in every DeltaNet layer. On a
+  request whose history ends a few tokens before the end of the prompt,
+  every single-message request included, that is a second pass over the
+  whole prompt: about 5.5% of a cold prefill, once per new prompt, never
+  on a cached turn. The recurrence now records the state as it passes the
+  save point instead, which costs one 3 MB store per layer; the state it
+  records is bit for bit the one it continues with, so nothing in any
+  answer changes (checked: a cold request and a resumed turn are
+  byte-identical to the previous mechanism's). Served, cache on, one cold
+  request per size on the reference machine, 0.12.0 -> 0.12.1: pp8192
+  1,190 -> 1,245 tok/s, pp32768 1,348 -> 1,417, each now within 2% of the
+  same image's cache-off figure, which is 0.11.2's level. (A note on the
+  tool: `halogen-bench.py` builds each prompt as a prefix of the next
+  larger one, so with the cache on the 32,768 request hits the 8,192
+  request's entry when run in that order and reads high; run the larger
+  size first for a cold number. The figures here are cold.) The release speed
+  gate now runs a cache-on cold prefill beside its cache-off one; the
+  cache-off sweep it ran alone is exactly the setting that skipped the
+  capture, which is why no release gate saw this. `HALOGEN_PROMPT_CACHE=0`
+  and `=1` reproduce the cache-off number on every version.
+- A request whose prompt alone exceeds the context returned a 400 that
+  printed a negative room (`leaving room for -778714`); it now says how many
+  tokens over the context the prompt is and names the two levers.
+
+### Documentation
+
+- `HALOGEN_SPEC_ADAPT` (the draft head's adaptive policy) has its row in
+  FLAGS.md; it had shipped without one.
+- The README's *Bring your own GGUF* names what is read on which tensor now
+  and what it costs; *Choosing a cache mode* describes the third saved place
+  and drops the advice it replaced.
+
 ## 0.12.0
 
 Engine only, two kernels of the model's sparse-attention indexer. No weight
