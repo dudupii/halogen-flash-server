@@ -114,7 +114,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3
 ```
 
 That is the whole thing. It fetches the weights on first start (118 GiB, so
@@ -138,7 +138,7 @@ podman run --rm -p 8731:8731 \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3
 ```
 
 The weights repo carries the tokenizer, so one `-v` is all either form needs.
@@ -574,10 +574,31 @@ issue #79 the old watchdog's kill landed on an engine in exactly that state,
 twice, and the driver then kept the engine's GPU memory after the process
 was gone, so every later start hung until the host rebooted (the end state
 issue #34's two machines and our own gate machine each reached by a
-different unclean exit). A restart policy turns that into a loop. If you run this server beside other
-work, read the watchdog's lines before trusting a restart policy to recover
-anything, and see [the host settings section](#the-host-settings-these-numbers-were-measured-on)
-for what a start on such a host says.
+different unclean exit). A restart policy turns that into a loop.
+
+That deferral has a bound since 0.12.3. The compaction counter is host-wide,
+so on a machine that compacts memory without pause it says nothing about
+this engine, and until 0.12.2 the watchdog also restarted its clock on every
+deferred probe: a reporter's engine sat wedged for 30 minutes, main thread
+at 100% of one core, `/health` timing out, container up (issue #85). The
+watchdog now prints the true silence on every line and, after
+`HALOGEN_ENGINE_WATCHDOG_DEFER_S` (900 s) of deferral with the engine's
+threads running rather than inside the kernel, takes the container down
+with a line that says why. An engine with a thread in uninterruptible sleep
+is still never killed.
+
+Two host settings that come up here. `amdgpu.noretry=0` on the kernel
+command line (ours has it) makes the GPU retry a lost page mapping instead
+of faulting, which turns the fault in issue #83 into the silent engine in
+issue #85: the same event, a hang instead of an error. And
+`vm.compaction_proactiveness=0` does not stop the stalls and slows the
+startup reservation, which waits on that compaction to build the KV pool;
+a reporter measured both and restored the kernel default (issue #85). If
+you run this server beside other work, read the watchdog's lines before
+trusting a restart policy to recover anything, and see [the host settings
+section](#the-host-settings-these-numbers-were-measured-on) for what a
+start on such a host says. Issue #85 tracks the stalls and wedges under
+host memory pressure across hosts.
 
 The startup line says how much room is left, and a second line says why your
 own tools will disagree:
@@ -665,7 +686,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_POOL_POSITIONS=262144 \
   -e HALOGEN_KV_SLOTS=2 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3
 ```
 
 **The smallest footprint at the full context.** The prefill arena halves.
@@ -681,7 +702,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3
 ```
 
 **If 131k of context is enough.** The pool cannot be smaller than one
@@ -697,7 +718,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3
 ```
 
 Two things hold for all of them. The lookup table (the n-gram embedding,
@@ -887,8 +908,8 @@ produced byte-identical output on every case.**
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.2 bench serial,mtp 256 low 3
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.2 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.3 bench serial,mtp 256 low 3
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.3 sweep -p 8192,32768 -n 128
 ```
 
 ---
@@ -1031,7 +1052,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_CHECKPOINT=/models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3
 ```
 
 Name any shard of a split; the siblings are found by name. With
@@ -1203,7 +1224,7 @@ podman run --rm \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2 \
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3 \
   convert /models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf /models/flash-next-iq4xs.hgn
 ```
 
@@ -1841,7 +1862,12 @@ process the line says that instead, and the server starts on what is left;
 when what is left is less than the pool needs, it refuses at once rather
 than blocking. What puts a host there is the kill, and since 0.11.9 the
 watchdog no longer kills an engine that is silent inside the kernel (see
-[Give it a machine of its own](#give-it-a-machine-of-its-own)).
+[Give it a machine of its own](#give-it-a-machine-of-its-own)). A start
+that grinds at `reserving the KV pool` with `compaction stalls` climbing
+and no GTT held is the other case: the host's free memory is not in
+contiguous pieces large enough (other processes hold it), and freeing them
+lets the reservation complete at once. That, and the stalls and wedges the
+same pressure causes while serving, are tracked in issue #85.
 
 A GPU memory fault (`Memory access fault by GPU node-1 ... Page not present`)
 is a different failure, and since 0.12.2 the container ends it in seconds:
@@ -1974,7 +2000,11 @@ only that ours is what produced these numbers.
 The remaining three, `amdgpu.vm_update_mode=0`, `amdgpu.noretry=0` and
 `amdgpu.sg_display=0`, we have never run without. They are listed for
 completeness rather than recommended, and they are unmeasured in both
-directions: we make no claim about what they buy. Two reports
+directions: we make no claim about what they buy. One of them changes a
+failure's shape rather than any speed: `amdgpu.noretry=0` makes the GPU
+retry a page whose mapping is gone instead of faulting, so an event that
+produces `Page not present` on a default boot (issue #83) produces a silent
+engine on ours (issue #85). Neither is better; know which one you will see. Two reports
 ([#34](https://github.com/peonist-ai/halogen-flash-server/issues/34)) of the
 driver keeping an engine's GPU memory after the process was gone came from
 boots with them set, and one A/B on one machine ran clean without them, so

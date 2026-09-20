@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.12.3
+
+Entrypoint, front end, one check in the `convert` door, and docs. No
+weight change, no new kernel, nothing in the engine's numerics. Three
+things from reports this weekend: the watchdog's deferral in issue #71
+([@YanissAmz](https://github.com/YanissAmz), tracked as issue #85), a
+`convert` that wrote a checkpoint missing its lookup table, and a
+request-log field that lied on a lone stream (issue #84,
+[@rba](https://github.com/rba)).
+
+### Fixed
+
+- **`convert` on a GGUF without the n-gram lookup table wrote every other
+  tensor and said nothing.** The result loaded and died at the first
+  request with `checkpoint: no tensor named
+  layers.1.ple.ngram_embedding.weight`. The converter now refuses at the
+  plan, names the table (`per_layer_token_embd.weight`, 51B parameters, the
+  model cannot run without it) and writes nothing; and the loader's message
+  for a missing tensor names the file and, for this tensor, the cause. A
+  GGUF made by llama.cpp's current converter from the stock checkpoint
+  carries the table. Note for anyone quantizing their own: this engine
+  reads the table in IQ4_NL only, which is what `llama-quantize` produces
+  for it from an IQ4_XS recipe and what the unsloth, bartowski and
+  mradermacher builds carry; a Q4_K_M, Q5_K or Q6_K recipe lands the table
+  on Q5_0, Q5_1 or Q8_0 and is refused with a message naming the type.
+  Reading those is the next GGUF item.
+
+- **A silent engine under constant memory compaction was never taken
+  down.** Since 0.11.9 the watchdog defers a silent probe while the
+  kernel's `compact_stall` counter climbs, because that silence is usually
+  a host short of memory and killing the engine there is what leaves the
+  driver holding its GPU memory (issue #79). Two things were wrong with
+  it. The counter is host-wide, so on a machine that compacts memory
+  without pause it says nothing about this engine; and the watchdog
+  restarted its clock on every deferred probe, so the seconds it printed
+  were the probe step, not the silence. A reporter's engine sat wedged for
+  30 minutes, main thread at 100% of one core in user space, `/health`
+  timing out, container up, while the log said `not counted as a wedge`
+  every 15 seconds. The clock now moves only when the engine answers,
+  every line prints the true silence, the end of a deferral is announced,
+  and the compaction deferral is capped by a new setting,
+  `HALOGEN_ENGINE_WATCHDOG_DEFER_S` (900 s; `0` = the old unbounded
+  behaviour): past it, an engine whose threads are running and not inside
+  the kernel is a wedge whatever the counter says, and the takedown line
+  names the cap and the counter. A thread in uninterruptible sleep is
+  still never killed. The deferral logic has a standing check that drives
+  every branch against a fake engine and a fake `/proc`, and it reads red
+  on the 0.12.2 script.
+- **The request line's `N tok beside other streams` counted tokens
+  produced with the drafter's head off**, which includes the adaptive
+  policy's rest stretches on a lone stream, so the field appeared on
+  requests that had the server to themselves. It now says `with the head
+  off`. The number did not change; the label did.
+
+### Docs
+
+- README: the watchdog's bound under "Give it a machine of its own"; that
+  `amdgpu.noretry=0` changes a lost GPU mapping from a fault (issue #83)
+  into a silent engine (issue #85) and buys no speed; that
+  `vm.compaction_proactiveness=0` does not stop the stalls and slows the
+  startup reservation; the contiguity case of a start that grinds at
+  `reserving the KV pool` with no GTT held. Issue #85 tracks the stalls
+  and wedges under host memory pressure across hosts.
+
 ## 0.12.2
 
 Engine, front end, entrypoint and docs. No weight change, no new kernel.

@@ -39,7 +39,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.3
 ```
 
 - On Docker, `--group-add keep-groups` is `--group-add video --group-add render`.
@@ -158,8 +158,11 @@ concurrency, prompt). Quote them with the number.
   process holds the GPU` line after it is memory the driver kept from a
   previous engine; the host needs a reboot, issue #79), `not counted as a
   wedge` (the engine silent inside the kernel: a memory stall on a shared
-  host, not a wedge; nothing is taken down), and `this is a wedge, not a
-  stall` (the container is going down so a restart policy can recover it).
+  host, not a wedge; nothing is taken down; since 0.12.3 the seconds on
+  that line are the true silence and, past `HALOGEN_ENGINE_WATCHDOG_DEFER_S`
+  of it with the threads running, `wedge under memory pressure` takes the
+  container down anyway, issue #85), and `this is a wedge, not a stall`
+  (the container is going down so a restart policy can recover it).
 - A cancelled request is a closed connection; there is no cancel by id and
   no response store.
 

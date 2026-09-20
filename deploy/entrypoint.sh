@@ -792,11 +792,13 @@ wait_for_engine() {
 # cannot answer anything), and the kernel's own compaction counter in
 # /proc/vmstat (compact_stall climbing while the engine is silent is the
 # stall the startup note describes). Silence under either is logged and NOT
-# counted, and the clock restarts when it ends: a wedged engine on a quiet
-# host is taken down at the same 180 s as before, and an engine that comes
-# back from a stall is never killed for it. What this cannot see is a wedge
-# on a host where some other process compacts memory without pause; there
-# the line it prints every 15 s says why it is waiting.
+# counted: a wedged engine on a quiet host is taken down at the same 180 s
+# as before, and an engine that comes back from a stall is never killed for
+# it. What this could not see until 0.12.3 was a wedge on a host where
+# memory is compacted without pause: the counter is host-wide, so the
+# deferral never ended (#71's second reporter, 30 minutes, container Up).
+# 0.12.3 bounds it: HALOGEN_ENGINE_WATCHDOG_DEFER_S (900) of deferred silence
+# with the threads running and not in D is the wedge, counter or no counter.
 wd_state() {
   # The worst state among the engine's tasks: D if any is in uninterruptible
   # sleep, else the main thread's. The comm field can contain spaces, so
@@ -900,35 +902,69 @@ engine_watchdog() {
   # also BLOCKS for the ping timeout, so counting `step` per iteration made the
   # threshold mean about three times what it says: measured 130 s to fire at a
   # 45 s setting. `last_ok` is the last time the engine actually answered.
-  local last_ok st cs_prev cs_now deferred=0
+  # 0.12.3 (public issues #71, #85): THE SILENCE CLOCK NEVER RESTARTS ON A
+  # DEFERRAL. 0.11.9 set `last_ok` to now on every deferred probe, so the
+  # seconds it printed were the time since the previous probe, not the
+  # silence, and under compaction that never stopped the engine could never
+  # be counted: one host sat wedged for 30 minutes with the container Up,
+  # the main thread at 100% of a core in user space, `/health` timing out,
+  # while `compact_stall` (a HOST-WIDE counter that says nothing about this
+  # engine) climbed at its usual rate. Now `last_ok` moves only when the
+  # engine answers, every line prints the true silence, and the compaction
+  # deferral has a cap, HALOGEN_ENGINE_WATCHDOG_DEFER_S (default 900, 0 =
+  # no cap): past it, an engine whose threads are running and not in the
+  # kernel is a wedge whatever the counter says, and the takedown runs. A
+  # thread in D still defers without a cap: SIGKILL does not reach a task
+  # in D, and the kill is what leaves the driver holding its GTT (#79).
+  # When a deferral ends without a PONG (the counter stops climbing) the
+  # engine gets one more `limit` from that point before the wedge counts,
+  # so a stall that has just cleared is not killed at its first probe.
+  # `last_ok` moves only on a PONG. `deferred` is the silence so far while
+  # deferred (0 = none this silence). `grace_from` is set when a deferral
+  # ends without a PONG: the wedge clock counts from there, not from
+  # `last_ok`, so the engine gets one `limit` after the stall clears.
+  local last_ok st cs_prev cs_now deferred=0 grace_from="" defer_max="${HALOGEN_ENGINE_WATCHDOG_DEFER_S:-900}" now
   last_ok=$(date +%s)
   cs_prev=$(wd_compact)
   while kill -0 "$pid" 2>/dev/null; do
     sleep "$step"
     if engine_pong "$port"; then
-      last_ok=$(date +%s)
-      cs_prev=$(wd_compact)
+      now=$(date +%s)
       if [ "$deferred" -gt 0 ]; then
-        echo "halogen: the engine answered PING again after ${deferred}s of silence inside the kernel; not a wedge, nothing was taken down" >&2
+        echo "halogen: the engine answered PING again after $(( now - last_ok ))s of silence (${deferred}s of it deferred: a thread inside the kernel, or the kernel compacting memory); not a wedge, nothing was taken down" >&2
         deferred=0
       fi
+      grace_from=""
+      last_ok="$now"
+      cs_prev=$(wd_compact)
       continue
     fi
     st=$(wd_state "$pid")
     cs_now=$(wd_compact)
+    now=$(date +%s)
     if [ "$st" = "D" ] || { [ -n "$cs_now" ] && [ -n "$cs_prev" ] && [ "$cs_now" -gt "$cs_prev" ]; }; then
-      deferred=$(( $(date +%s) - last_ok ))
+      grace_from=""
+      deferred=$(( now - last_ok ))
       if [ "$st" = "D" ]; then
         echo "halogen: the engine has not answered PING for ${deferred}s: a thread is in uninterruptible sleep (state D, inside the kernel). Not counted as a wedge; this is the host short of memory, and killing the engine here is what leaves the driver holding its memory (issue #79)." >&2
+      elif [ "$defer_max" -gt 0 ] && [ "$deferred" -ge "$defer_max" ]; then
+        echo "halogen: the engine has answered nothing for ${deferred}s while the kernel's compaction counter kept climbing (compact_stall +$(( cs_now - cs_prev )) since the last probe), past HALOGEN_ENGINE_WATCHDOG_DEFER_S=${defer_max}." >&2
+        echo "  That counter is host-wide and says nothing about this engine; its threads are running (state ${st}), not inside the kernel, so this is a wedge under memory pressure, not a stall that will clear (issue #85). GTT in use now: $(wd_gtt_gib) GiB." >&2
+        echo "  Shutting the container down so a restart policy can recover it. Free host memory, or give this server a machine of its own; if the next start hangs at 'reserving the KV pool', read its 'GTT in use before this start' line (issue #79)." >&2
+        return 1
       else
-        echo "halogen: the engine has not answered PING for ${deferred}s: the kernel is compacting host memory (compact_stall +$(( cs_now - cs_prev )) since the last probe). Not counted as a wedge; it clears when the compaction does. Free host memory, or give this server a machine of its own." >&2
+        echo "halogen: the engine has not answered PING for ${deferred}s: the kernel is compacting host memory (compact_stall +$(( cs_now - cs_prev )) since the last probe). Not counted as a wedge yet; it clears when the compaction does, and past ${defer_max}s of this it is taken down (HALOGEN_ENGINE_WATCHDOG_DEFER_S). Free host memory, or give this server a machine of its own." >&2
       fi
-      last_ok=$(date +%s)
       cs_prev="$cs_now"
       continue
     fi
     cs_prev="$cs_now"
-    silent=$(( $(date +%s) - last_ok ))
+    if [ "$deferred" -gt 0 ] && [ -z "$grace_from" ]; then
+      grace_from="$now"
+      echo "halogen: the compaction stopped after ${deferred}s of deferred silence and the engine has not answered; counting from here (${limit}s to the takedown)" >&2
+      continue
+    fi
+    silent=$(( now - ${grace_from:-$last_ok} ))
     echo "halogen: the engine has not answered PING for ${silent}s (engine state ${st}, no compaction in progress)" >&2
     if [ "$silent" -ge "$limit" ]; then
       echo "halogen: the engine process is alive and has answered nothing for ${silent}s." >&2
