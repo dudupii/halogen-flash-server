@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.12.2
+
+Engine, front end, entrypoint and docs. No weight change, no new kernel.
+Four things the server could not say about itself, from two reports this
+week: a fine-tune's assessment on the model's Hugging Face page
+(cygnal) and issue #83 ([@noguespi](https://github.com/noguespi)); and
+one correction to our own speed gate. Every number below is the
+reference machine.
+
+### Added
+
+- **The chat template is probed at startup.** Every thinking control
+  (`enable_thinking`, `reasoning_effort: "none"`, `HALOGEN_ENABLE_THINKING=0`,
+  the budgets and the answer room) works by asking the chat template to
+  render the think block one way or the other, and the server renders
+  whatever template the tokenizer directory carries. A tokenizer mounted
+  from another repository can carry a template without that branch, and
+  through 0.12.1 the server accepted every thinking control against it and
+  rendered thinking anyway, with nothing in the log or on the wire saying
+  so (cygnal's assessment ran 0.11.4 with a hand-mounted `/tokenizer` and
+  reported "no way to disable thinking"). The server now renders a
+  one-message conversation with thinking off and on at startup, in the
+  entrypoint's pre-flight so the answer comes in a second rather than after
+  the weights are pinned, and refuses to start on a template whose two
+  renders do not differ the way the controls assume, naming the file in one
+  sentence. `HALOGEN_TEMPLATE_UNCHECKED=1` serves it anyway with the same
+  sentence as a warning. The startup line and `/health.chat_template` name
+  the template (the path that carries the rendered text and the sha256 of
+  that text) and the probe's result. The weights repo's own `tokenizer/`
+  passes.
+- **Thinking is visible per request.** Every chat request's log line ends
+  with `think on` or `think off`, and when the server closed the think
+  block (the answer room, or the request's own `max_thinking_tokens`) the
+  line says `closed at N by answer room` and the reply's
+  `usage.completion_tokens_details` carries `reasoning_closed_at` and
+  `reasoning_closed_by` (`"answer_room"` or `"max_thinking_tokens"`) beside
+  `reasoning_tokens`; on `/v1/responses` the same two ride
+  `output_tokens_details`. A reply whose block the model closed itself has
+  neither. Under a 2,048 budget the answer room is 1,024 tokens, so a reply
+  that reads as about a thousand hidden tokens and then a short answer is
+  that close; the fields now name it (cygnal's "~1,049 hidden tokens").
+
+### Fixed
+
+- **`HALOGEN_FLASH_PIN_TRUNK=0` runs at the shipped defaults** (issue #83,
+  [@noguespi](https://github.com/noguespi)). The README's own last resort
+  for a shared machine exited on the first request, on every release, with
+  `internal sizing error in the per-forward arena`: the unpinned path's
+  scratch was sized for a decode step (its slack held about 50 prompt
+  tokens) and the path itself had no prefill (the grouped-by-expert prefill
+  reads the weights in place and was skipped without the pin), so a prompt
+  would have run decode kernels once per token. Both are fixed: the scratch
+  is sized for a 32,768-token call, and a prompt of 64 tokens or more
+  stages each layer's experts onto the GPU once per call (1.43 GB a layer)
+  and runs the same grouped prefill the pinned path runs, on the same
+  bytes. What it costs, measured on the reference machine: with the weights in the
+  file cache, a 32,768-token prompt prefills in 26.6 s against 26.7 pinned,
+  8,192 in 8.8 against 7.1, 128 tokens in 2.4 against 1.0, 32 in 2.3
+  against 0.45 (the staging is about 7 s a prompt at any length, and on a
+  long prompt the grouped kernels run faster on the GPU copy than in place,
+  so the two cancel); served, where the unlocked weights compete with the
+  KV pool and the lookup table for the file cache, a 6,500-token prompt
+  took 28 s, and 51 s on the first request after a start (the copy then
+  reads from disk at about 3 GB/s). Decode under the flag is unchanged at 6
+  tokens/s against 37, several times slower as documented. The generated tokens match the pinned run's on the three
+  longer prompts and differ on the 32-token one, as the flag's numeric
+  label has always said. It remains a last resort, and now a working one.
+- **No GPU core dump after a fault** (issue #83). After a GPU memory fault
+  the bundled runtime wrote a GPU core dump of the process (`GPU coredump:
+  ... Falling back to file-based dump`), which for a process with over
+  100 GiB mapped is minutes in uninterruptible sleep before the engine can
+  exit; the container's watchdog read that silence as a host short of
+  memory and waited it out. The container now disables the runtime's dump
+  (`HSA_DISABLE_COREDUMP_ON_EXCEPTION=1`) and the process's core file
+  (`ulimit -c 0`), so a fault is followed by the engine's exit and the
+  takedown path in seconds. Measured with a deliberate fault in a throwaway
+  container holding 48 GiB of GPU memory: without the variable the runtime
+  wrote a 52 GB dump and the process lived 33 s past the fault, on an idle
+  machine with a warm file cache (a host at its memory edge writes that to
+  disk under reclaim, which is the minutes in #83's log); with it, no file
+  and the process ended within a second of the fault.
+- **The speed gate's cold-prefill arm ran its two prompts in the wrong
+  order.** The 32k prompt is now measured first, so its number is cold; in
+  the old order it hit the 8k prompt's cache entry (the tool's prompts are
+  prefixes of each other) and read about 1,690 tok/s where the cold figure
+  is about 1,417. The README's numbers were already the cold ones.
+
 ## 0.12.1
 
 Engine, front end, entrypoint and docs. No weight change. Three things

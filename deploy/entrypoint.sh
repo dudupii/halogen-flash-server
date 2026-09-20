@@ -51,6 +51,20 @@
 # yourself. The compose file does, deliberately.
 set -euo pipefail
 
+# NO CORE DUMPS, GPU OR CPU (0.12.2, public issue #83). After a GPU memory
+# fault the bundled runtime writes a GPU core dump of the process
+# ("GPU coredump: ... Falling back to file-based dump"), and this process
+# has 100+ GiB mapped, so that is minutes in uninterruptible sleep before
+# the engine can exit and the container can come down; the watchdog reads
+# the silence as a host short of memory (#79's shape) and waits it out.
+# The variable's name is the one the runtime shipped in this image reads
+# (strings on its libhsa-runtime64.so; HSA_COREDUMP_PATTERN is the sibling
+# the message names). The CPU core of the same process through the host's
+# core_pattern is the same minutes, so RLIMIT_CORE is 0 beside it. A fault
+# then ends the engine in seconds and the takedown path (0.11.9) runs.
+export HSA_DISABLE_COREDUMP_ON_EXCEPTION="${HSA_DISABLE_COREDUMP_ON_EXCEPTION:-1}"
+ulimit -c 0
+
 ENG_PORT="${HALOGEN_PORT:-8730}"
 API_PORT="${HALOGEN_API_PORT:-8731}"
 BIND="${HALOGEN_BIND:-127.0.0.1}"

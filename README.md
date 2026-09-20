@@ -114,7 +114,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
 ```
 
 That is the whole thing. It fetches the weights on first start (118 GiB, so
@@ -138,7 +138,7 @@ podman run --rm -p 8731:8731 \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
 ```
 
 The weights repo carries the tokenizer, so one `-v` is all either form needs.
@@ -305,6 +305,36 @@ when it is smaller. `HALOGEN_THINKING_ANSWER_ROOM` sets the room in tokens;
 `0` restores the 0.10.x behaviour; `/health` reports it as
 `thinking_answer_room`. Only a request whose thinking would have run past
 the line is affected; every other reply is untouched.
+
+**When the server closed the block, it says so, since 0.12.2.** A reply whose
+think block the server closed (the answer room, or your own
+`max_thinking_tokens`) carries `reasoning_closed_at` (the token the block
+was closed at) and `reasoning_closed_by` (`"answer_room"` or
+`"max_thinking_tokens"`) in `usage.completion_tokens_details`, beside
+`reasoning_tokens`; on `/v1/responses` the same two ride
+`output_tokens_details`. A reply whose block the model closed itself has
+neither. The server's per-request log line says the same (`think on, closed
+at 1024 by answer room`) and, on every chat request, whether the prompt
+opened a think block at all (`think on` / `think off`). Under a 2,048
+budget the room is 1,024 tokens, so a reply that reads as "about a thousand
+hidden tokens, then a short answer" is this close, and the fields now name
+it.
+
+**The chat template is checked before the server starts, since 0.12.2.**
+Every thinking control above works by asking the chat template to render
+the block one way or the other, and the server renders whatever template
+the tokenizer directory carries. A tokenizer mounted from another
+repository can carry a template without that branch, and on 0.12.1 and
+earlier it silently accepted `enable_thinking: false`, `reasoning_effort:
+"none"` and `HALOGEN_ENABLE_THINKING=0` and rendered thinking anyway. The
+server now renders a one-message conversation with thinking off and on at
+startup and refuses to start if the two do not differ the way the controls
+assume, naming the file in one sentence; `HALOGEN_TEMPLATE_UNCHECKED=1`
+serves it anyway, with the same sentence as a warning. The startup line
+and `/health.chat_template` say which template loaded (the path and the
+sha256 of its text) and whether the check passed, so a report about
+thinking can start from that line. The weights repo's own `tokenizer/`
+passes, and the entrypoint's fallback to it needs no mount at all.
 
 **Your harness's own name for the thinking controls works, since 0.11.0.**
 Besides `reasoning_effort`, `enable_thinking`, `chat_template_kwargs` and
@@ -576,7 +606,18 @@ above. Options, in the order worth trying:
 - **Lower `HALOGEN_KV_POOL_POSITIONS`.** Fewer conversations stay resident at
   once; each one's speed and its answers are unchanged.
 - **`HALOGEN_FLASH_PIN_TRUNK=0`** gives a great deal of memory back and costs
-  **several times the decode speed**. It is a last resort, not a tuning option.
+  **several times the decode speed** (6 tokens/s against 37 on the
+  reference machine) and a fixed cost on every prompt of 64 tokens or more,
+  which copies each layer's experts onto the GPU once: about 7 s when the
+  weights are in the file cache (the whole reason for the setting is that
+  they are no longer locked there) and 25 to 50 s when the kernel has let
+  them go to disk. Measured: a 32,768-token prompt in 26.6 s against 26.7
+  pinned and 8,192 in 8.8 against 7.1 with the weights cached; served, a
+  6,500-token prompt in 28 s and 51 s on the first request after a start.
+  It is a last resort, not a tuning option. Through 0.12.1 it did not work
+  at the shipped settings at all (the first request ended the server with
+  `internal sizing error in the per-forward arena`, issue #83); since
+  0.12.2 it does.
 
 Compacting memory afterwards does not help, because the memory this server
 holds cannot be moved. If you need to reclaim it, stop the server.
@@ -624,7 +665,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_POOL_POSITIONS=262144 \
   -e HALOGEN_KV_SLOTS=2 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
 ```
 
 **The smallest footprint at the full context.** The prefill arena halves.
@@ -640,7 +681,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
 ```
 
 **If 131k of context is enough.** The pool cannot be smaller than one
@@ -656,7 +697,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
 ```
 
 Two things hold for all of them. The lookup table (the n-gram embedding,
@@ -846,8 +887,8 @@ produced byte-identical output on every case.**
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.1 bench serial,mtp 256 low 3
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.1 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.2 bench serial,mtp 256 low 3
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.12.2 sweep -p 8192,32768 -n 128
 ```
 
 ---
@@ -990,7 +1031,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_CHECKPOINT=/models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
 ```
 
 Name any shard of a split; the siblings are found by name. With
@@ -1162,7 +1203,7 @@ podman run --rm \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1 \
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2 \
   convert /models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf /models/flash-next-iq4xs.hgn
 ```
 
@@ -1801,6 +1842,18 @@ when what is left is less than the pool needs, it refuses at once rather
 than blocking. What puts a host there is the kill, and since 0.11.9 the
 watchdog no longer kills an engine that is silent inside the kernel (see
 [Give it a machine of its own](#give-it-a-machine-of-its-own)).
+
+A GPU memory fault (`Memory access fault by GPU node-1 ... Page not present`)
+is a different failure, and since 0.12.2 the container ends it in seconds:
+on 0.12.1 and earlier the bundled runtime then wrote a GPU core dump of the
+whole process (`GPU coredump: ... Falling back to file-based dump`), which
+for a process with over 100 GiB mapped is minutes in uninterruptible sleep
+before the engine can exit, read by the watchdog as the memory case above.
+The container now disables that dump and the process's core file, so the
+fault line is followed by the engine's exit and the takedown path, and the
+log holds the fault's own decode (issue #83). The fault itself is reported
+on one host (kernel 7.2.5) and not reproduced on the reference host (7.1.8);
+if you see it, the fault line and `uname -r` are what a report needs.
 
 ### If the server starts but crawls on long prompts
 

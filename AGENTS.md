@@ -39,7 +39,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.12.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.12.2
 ```
 
 - On Docker, `--group-add keep-groups` is `--group-add video --group-add render`.
@@ -79,6 +79,17 @@ whether it starts and how it behaves:
   side; a request that names its own wins. The chat route accepts
   `reasoning_effort`, `enable_thinking`, `max_thinking_tokens` and the
   OpenRouter and Anthropic shapes; `/health` lists them under `supported`.
+  Since 0.12.2 every chat request's log line says `think on` or `think
+  off`, and when the server closed the block (`closed at 1024 by answer
+  room`) the reply's `usage.completion_tokens_details` carries
+  `reasoning_closed_at` and `reasoning_closed_by` (`answer_room` or
+  `max_thinking_tokens`); a reply the model closed itself has neither.
+- **The chat template is probed at startup** (0.12.2): a template without
+  a working `enable_thinking` branch (a tokenizer mounted from another
+  repository) refuses to start with one sentence naming the file;
+  `HALOGEN_TEMPLATE_UNCHECKED=1` serves it anyway. `/health.chat_template`
+  and the startup line name the template (path, sha256) and the probe's
+  result. A report that thinking cannot be turned off starts there.
 - **The token budget covers thinking too.** `finish_reason: "length"` means
   the budget ran out; the default is 8,192, and `max_tokens`,
   `max_completion_tokens` and `max_output_tokens` are the same field.
@@ -118,7 +129,8 @@ concurrency, prompt). Quote them with the number.
 - **`GET /health`** is the authoritative account of the running build: what
   it accepts (`supported`, `token_budget_aliases`, `max_tokens_default`,
   whether images are accepted and why not), `version` for both containers,
-  `engine.responds`, `busy`, `busy_for_s`, `in_flight`, `queued`.
+  `chat_template` (path, sha256, `probe`), `engine.responds`, `busy`,
+  `busy_for_s`, `in_flight`, `queued`.
 - **`GET /cache`**: hits and stores, `hit_rate` (requests) and
   `token_hit_rate` (prompt tokens), `dropped` (entries a follow-up dropped
   to take its region over; not evictions), and `pool`: `positions`, `used`,
@@ -138,7 +150,9 @@ concurrency, prompt). Quote them with the number.
   hundred tokens in a second is a chunk's fixed cost, not a speed) and the
   pool's occupancy (`prompt 30828 (30803 cached, 99.9%), prefill 0.38s
   (25 new) | ... | pool 30976/524288 6%`; the cold turn before it:
-  `prompt 30803, prefill 27.92s = 1103 t/s`).
+  `prompt 30803, prefill 27.92s = 1103 t/s`) and, since 0.12.2, the
+  thinking state (`| think on`, `| think off`, `| think on, closed at 1024
+  by answer room`).
 - **Host and driver state**, in the prologue and from the watchdog: `GTT in
   use before this start: N GiB of M` (tens of GiB with a `WARNING ... no
   process holds the GPU` line after it is memory the driver kept from a
