@@ -2,25 +2,26 @@
 
 ## 0.12.3
 
-Entrypoint, front end, one check in the `convert` door, and docs. No
+Entrypoint, front end, the repack command's default, and docs. No
 weight change, no new kernel, nothing in the engine's numerics. Three
 things from reports this weekend: the watchdog's deferral in issue #71
 ([@YanissAmz](https://github.com/YanissAmz), tracked as issue #85), a
-`convert` that wrote a checkpoint missing its lookup table, and a
-request-log field that lied on a lone stream (issue #84,
-[@rba](https://github.com/rba)).
+`--repack` that wrote a checkpoint missing its lookup table (Hugging Face
+discussion 4), and a request-log field that lied on a lone stream (issue
+#84, [@rba](https://github.com/rba)).
 
 ### Fixed
 
-- **`convert` on a GGUF without the n-gram lookup table wrote every other
-  tensor and said nothing.** The result loaded and died at the first
-  request with `checkpoint: no tensor named
-  layers.1.ple.ngram_embedding.weight`. The converter now refuses at the
-  plan, names the table (`per_layer_token_embd.weight`, 51B parameters, the
-  model cannot run without it) and writes nothing; and the loader's message
-  for a missing tensor names the file and, for this tensor, the cause. A
-  GGUF made by llama.cpp's current converter from the stock checkpoint
-  carries the table. Note for anyone quantizing their own: this engine
+- **`flash_serve --repack` wrote a checkpoint without the n-gram lookup
+  table unless `--with-table` was given, and that file loads and dies with
+  `checkpoint: no tensor named layers.1.ple.ngram_embedding.weight`.** The
+  0.7.0 changelog printed the flag in brackets, and a user who ran the
+  command on their own working GGUF got exactly that (Hugging Face
+  discussion 4). The table is now written by default (`--no-table` is the
+  opt-out), the loader's message for that tensor names both ways to such a
+  file, and the same repack refuses at the plan, writing nothing, when the
+  GGUF itself has no table. The image's `convert` always passed the flag
+  and was never affected. Note for anyone quantizing their own: this engine
   reads the table in IQ4_NL only, which is what `llama-quantize` produces
   for it from an IQ4_XS recipe and what the unsloth, bartowski and
   mradermacher builds carry; a Q4_K_M, Q5_K or Q6_K recipe lands the table

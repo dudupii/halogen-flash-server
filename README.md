@@ -1240,8 +1240,10 @@ quality sidecar does not apply), which loads in seconds from a warm disk
 instead of repacking at every start, and the file can move to any machine
 that runs this image. Nothing in it is requantized: byte for byte it is
 what a GGUF start builds in RAM, so the outputs are the same. The command
-is the engine's `flash_serve --repack IN.gguf --out OUT.hgn --with-table`
-with the head and the checks around it.
+is the engine's `flash_serve --repack IN.gguf --out OUT.hgn` with the head
+and the checks around it (since 0.12.3 the table is written by default; on
+0.12.2 and earlier `--repack` needed `--with-table`, and a file made without
+it loads and stops at `no tensor named layers.1.ple.ngram_embedding.weight`).
 
 ---
 
