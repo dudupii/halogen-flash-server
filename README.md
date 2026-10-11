@@ -133,7 +133,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
 ```
 
 That is the whole thing. It fetches the weights on first start (about 111 GiB, so
@@ -184,7 +184,7 @@ podman run --rm -p 8731:8731 \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
 ```
 
 The weights repo carries the tokenizer, so one `-v` is all either form needs.
@@ -543,7 +543,10 @@ so with that setting on you will see the text twice. No `encrypted_content`
 is sent, and a `reasoning` item echoed back in a later turn is dropped, as
 before. **There is no response store**, so `previous_response_id`, retrieving
 a response by id, and cancelling one are not available; send the history with
-each request, which is what Codex does.
+each request, which is what Codex does. Since 0.18.1 a request that sends
+`previous_response_id` and no earlier turn is refused with a 400, so a client
+that expects a store finds out at once instead of getting an answer without
+its context.
 
 **Statistics for llama-swap** (since 0.7.0; #45): every response, on both
 routes, carries a `timings` object in llama-server's shape (`prompt_n`,
@@ -616,10 +619,10 @@ and `{"type": "json_object"}` on `/v1/responses` (the shape Codex sends; its
 approvals reviewer sends one on every auto-reviewed tool call, which is what
 #43 hit). The engine enforces the schema while it decodes: every token is
 chosen from the tokens the schema allows next, so the reply parses and
-validates by construction, with no retry and no repair. It is greedy
-decoding under a mask, nothing else changes: the same request without the
-schema is bitwise what it was, and a constrained request is identical
-whether it decoded serially, with the draft head, with prompt lookup, or
+validates by construction, with no retry and no repair. It is decoding
+under a mask, greedy or sampled, and nothing else changes: the same request
+without the schema is bitwise what it was, and a greedy constrained request
+is identical whether it decoded serially, with the draft head, with prompt lookup, or
 beside other requests. It costs nothing measurable: the schema is compiled
 once (a millisecond) and every state's mask lives on the GPU, so the decode
 loop reads a pointer.
@@ -647,15 +650,21 @@ a call and the answer as it would with no schema. The schema holds from the
 JSON's first `{`, the text written before it is dropped, and a reply that
 would end first starts the JSON instead. That text may run to half of what
 `max_tokens` leaves after thinking, at most 1024 tokens; past that the JSON
-starts and a tool call is no longer offered. This applies to schemas whose root
+starts and a tool call is no longer offered. A sampled request that would
+answer in plain text usually runs that text to the limit before the JSON
+starts, so with tools and a temperature above 0 expect a slower reply where
+the greedy one would answer at once. This applies to schemas whose root
 is an object. `HALOGEN_SCHEMA_ESCAPE=off` binds the schema from the first
 token again. Whitespace between tokens is allowed, so a pretty-printed reply is fine, but
 at most two whitespace-only tokens in a row (a forbidden preference
 otherwise falls to a newline, and then another). Only the end-of-turn token
 is legal once the value is complete, so the reply is exactly the JSON.
-Temperature must be 0 (or omitted): a sampled request with a schema is a
-400 for now, and so is a schema with an image. `HALOGEN_GRAMMAR=0` turns the
-feature off (the 400 of 0.7.0 comes back).
+Since 0.18.1 a request with a schema may sample (temperature above 0):
+every token is drawn from the tokens the schema allows, and a `seed` repeats
+the reply on the terms of *Sampling* above (alone, and both runs cold or both
+read from the prompt cache). A schema with an image, or with `logprobs`, is a
+400. `HALOGEN_GRAMMAR=0` turns the feature off (the 400 of 0.7.0 comes
+back).
 
 Verified against the Codex CLI driving real tasks end to end, and separately
 against the official `openai` Python SDK, which parses every event into its own
@@ -685,11 +694,16 @@ Claude Code and the `anthropic` SDKs can use it directly:
 ```bash
 export ANTHROPIC_BASE_URL=http://<your-server>:8731
 export ANTHROPIC_API_KEY=anything
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
 claude
 ```
 
 The server checks neither the key nor the model name, and replies name the
-model that served them. It was built from what Claude Code actually sends:
+model that served them. Claude Code asks for its model's full output limit on
+every request, more than this server's cap (`max_tokens_cap` in `/health`,
+65,536 by default). Since 0.18.1 `/v1/messages` runs such a request with the
+cap and says so once in the log; the third line above keeps it below the cap
+and leaves room in the KV pool for other requests. It was built from what Claude Code actually sends:
 streamed replies with `thinking`, `text` and `tool_use` blocks, tool
 results, a system prompt in text blocks, and `system` turns inside
 `messages`, which become user text. `thinking` (enabled, adaptive or
@@ -783,6 +797,8 @@ A harness that runs several branches from one conversation can ask the server to
     curl -s localhost:8731/v1/chat/completions -H 'X-Halogen-From: plan-7f3a' -H 'X-Halogen-Keep: plan-7f3b' -d '{...}'
 
 Every request is an ordinary request, and a server without the setting answers it the same way. The response header `X-Halogen-From` says `used`, `unmatched` (the history does not repeat the kept one) or `unknown`, and the last two are answered as usual. To branch from inside a reply, send part of it as the last assistant message (`continue_final_message` on Chat Completions, a final assistant message on Messages and Responses). The same headers work on `/v1/messages` and `/v1/responses`, for harnesses that can set request headers. Names are released after 10 minutes unused, at most 8 live at once (`HALOGEN_FORK_TTL_S`, `HALOGEN_FORK_HANDLES`), and `GET /halogen/handles` lists them. With `HALOGEN_CACHE_DIR` set they survive a restart. **Every client of the server shares one set of names.** Keep the port private or set `HALOGEN_API_KEY`, and use names other clients cannot guess.
+
+**Claude Code.** Claude Code cannot send these headers, but it names its own threads on every request. With `HALOGEN_FORK=1` and `HALOGEN_FORK_MAP=claude-code`, the server keeps each thread's state (the main conversation and each subagent) under a name of its own and starts that thread's next request from it, with nothing to set in Claude Code. A subagent's first request starts from its parent's state when it repeats it. Each name is made from the session, the thread and the API key, so it cannot be guessed and two keys never share one. A side request on a session (a title, a summary) never replaces the conversation's state. Off by default.
 
 ### Using it as a classifier
 
@@ -1008,7 +1024,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_POOL_POSITIONS=262144 \
   -e HALOGEN_KV_SLOTS=2 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
 ```
 
 **The smallest footprint at the full context.** The prefill arena halves.
@@ -1024,7 +1040,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
 ```
 
 **If 131k of context is enough.** The pool cannot be smaller than one
@@ -1040,7 +1056,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
 ```
 
 **Beside other GPU servers, count the hardware queues.** Another project
@@ -1271,8 +1287,8 @@ produced byte-identical output on every case**, on both checkpoints.
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.0 bench serial,mtp 256 low 3
-podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.0 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.1 bench serial,mtp 256 low 3
+podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.1 sweep -p 8192,32768 -n 128
 ```
 
 Run the sweep with the prompt cache off, as above. It repeats one prompt per
@@ -1448,7 +1464,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_CHECKPOINT=/models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
 ```
 
 Name any shard of a split; the siblings are found by name. With
@@ -1615,7 +1631,7 @@ podman run --rm \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0 \
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1 \
   convert /models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf /models/flash-next-iq4xs.hgn
 ```
 
@@ -1657,7 +1673,7 @@ podman run --rm \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0 \
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1 \
   MODE [FILE] [flags]
 ```
 
@@ -2084,7 +2100,13 @@ three times for about 28 s each instead of once for 105 s. `HALOGEN_MAX_TOK=1638
 halves the pause for everyone at about 8% slower prefill. `HALOGEN_ADMIT_CHUNK=8192`
 makes the pause about 8 s and costs the admitted prompt about 5 s on its first
 token, and that prompt's answer then depends on the load when it arrived, which
-is the one setting here that gives up the identity property. And the speculative
+is the one setting here that gives up the identity property. Since 0.18.1 a
+short request that arrives during those pieces runs between two of them
+instead of waiting for the whole prompt, and a request from a person goes
+ahead of agent turns waiting in the queue (a request whose last message is a
+tool result). An agent turn that has waited half a minute counts as a
+person's. Neither changes any answer. A conversation that is already
+generating still pauses while each piece is read. And the speculative
 drafter, which is the default, speculates while it is the only conversation
 generating. With exactly two generating, both speculate together in one forward
 pass while that pays, and decode as a plain batch when it does not. A request
@@ -2123,6 +2145,18 @@ instead: it is two by default, which is a conversation plus one side turn,
 and on two the parent's resume point is the one the children's stores
 replace. The server prints the memory budget at startup and warns before
 the allocator refuses.
+
+**Side requests** (since 0.18.1; #151). A request that carries
+`"prompt_cache_policy": "no_store"` at the top level reads the prompt cache
+and stores nothing: no entry, no write to `HALOGEN_CACHE_DIR`, and every
+cached conversation is left exactly as it was, including one it resumed
+from. Send it on a summarizer, a title generator or any other side request
+that shares the server with a conversation, so the conversation's next turn
+still finds its history. Absent or `"default"` is the usual caching, and any
+other value is a 400. It reads entries held in memory, not ones only the disk
+cache holds. Under memory pressure it needs room in the pool like any
+request, so it can make the server forget an idle conversation, the same as
+any other request.
 
 When the KV pool has no room for a new request, the server forgets the
 least recently used conversation's region and says so in the log (`kv
@@ -2467,7 +2501,7 @@ podman run --rm --name halogen -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
   -v ~/halogen-records:/records -e HALOGEN_RECORD_DIR=/records \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
 ```
 
 The startup log then says `request records ON in /records`, with the text
@@ -2847,16 +2881,16 @@ of our machines exposes the file.
 - **No response store.** `/v1/responses` generates and streams; it does not
   keep responses, so `previous_response_id`, retrieval by id and cancellation
   by id are not available. **Cancellation is by disconnect** (since 0.10.2;
-  #58): on every route, streaming or not, a request whose client closes the
-  connection is cancelled within one decode step, its slot and KV
-  reservation are released, and `/health.in_flight` and `/metrics` show it
-  at once; the server log prints a "client disconnected" line with the
-  timing. Since 0.16.0 (#122) that holds while the prompt is still being
-  read too. A long prompt stops within about a second, and the log says how
-  far it got. A prompt read in full stays in the prompt cache, so a retry
-  resumes from it. One cut while being read adds nothing to the cache.
-  Before 0.10.2 only streaming requests were cancelled; a non-streaming
-  request ran to its natural end (EOS, `max_tokens` or the thinking budget).
+  #58). A request whose client closes the connection while its prompt is
+  being read stops within about a second, and the log says how far it got
+  (since 0.16.0, #122). A prompt read in full stays in the prompt cache, so a
+  retry resumes from it. Since 0.18.1 a client that leaves after the reply
+  has started pauses it instead: nothing more is generated, and the same
+  request sent again within 20 seconds continues it
+  (`HALOGEN_RETRY_GRACE_S`, `0` = stop at once, as before). After the wait,
+  or at once when another request needs the slot, the paused reply is stopped
+  and its slot and KV reservation are released. The server log prints a
+  "client disconnected" line with the timing either way.
 - **Images are read, not generated.** There is no image output, and no audio
   or video input.
 - **One GPU, one model family.** gfx1151 only. The build hard-rejects other

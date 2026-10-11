@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.18.1
+
+Structured output at any temperature, a way to keep side requests out of the
+prompt cache, replies that survive a dropped connection, Claude Code
+sessions that keep their state, and fairer scheduling when a long prompt
+arrives. The Flash checkpoints are unchanged.
+At temperature 0 the output is still byte-identical to serial greedy decode.
+For the reports: issues #151 ([@jerry426](https://github.com/jerry426)),
+#161 ([@dardeaw](https://github.com/dardeaw)) and #165
+([@featalion](https://github.com/featalion)).
+
+### Added
+
+- **Structured output at any temperature.** A request with a JSON schema
+  (`response_format`, `text.format` or `output_config.format`) may now set a
+  temperature above 0. Every token is drawn from the tokens the schema
+  allows, so a sampled reply parses and validates like a greedy one. It used
+  to be refused with a 400. A schema with an image, or with `logprobs`, is
+  still a 400.
+- **`prompt_cache_policy: "no_store"`** (#151). A top-level request field on
+  `/v1/chat/completions`, `/v1/messages`, `/v1/responses` and
+  `/v1/completions`. The request reads the prompt cache as usual and stores
+  nothing: no new cache entry, nothing written to `HALOGEN_CACHE_DIR`, and
+  every cached conversation left as it was. Use it for side requests, such
+  as a summarizer or a title generator, that share the server with a
+  conversation. Absent or `"default"` is the usual caching, and any other
+  value is a 400. Under memory pressure such a request still needs room like
+  any other, so it can make the server forget an idle conversation.
+- **A reply survives a dropped connection.** When a client disconnects in
+  the middle of a reply, the server pauses the reply for 20 seconds instead
+  of stopping it. If the same request arrives again in that time, as a
+  client's automatic retry does, the reply continues where it paused, and
+  what was already generated is sent first. At temperature 0 or with a
+  `seed`, the retried reply is the same as an uninterrupted one. A paused
+  reply gives up its slot at once when another request needs it. Some
+  harnesses resend a different request once part of the answer has reached
+  them, and that request starts fresh. `HALOGEN_RETRY_GRACE_S` sets the wait,
+  and `0` stops the reply at once, as before.
+- **Claude Code sessions**, opt-in. With `HALOGEN_FORK=1` and
+  `HALOGEN_FORK_MAP=claude-code`, the server keeps each Claude Code thread's
+  state (the main conversation and each subagent) and starts that thread's
+  next request from it, with nothing to set in Claude Code. Off by default.
+  See the README's *Sessions* section.
+
+### Changed
+
+- **A long prompt no longer holds up short requests** (#161, in part). A
+  short request that arrives while a long prompt is being read now runs
+  between two pieces of it instead of waiting for all of it, and a request
+  from a person goes ahead of queued agent turns (requests whose last
+  message is a tool result). Every reply is unchanged. A reply that is
+  already streaming still pauses while each piece of the long prompt is
+  read.
+
+### Fixed
+
+- **Claude Code's first request answered 400.** A current Claude Code asks
+  for its model's full output limit (128,000 tokens) on every request, above
+  this server's cap, so the README's setup failed at once unless
+  `CLAUDE_CODE_MAX_OUTPUT_TOKENS` was set. On `/v1/messages` such a request
+  now runs with the cap, and the server says so once in its log. The other
+  routes still refuse a `max_tokens` above the cap with a 400.
+- **`previous_response_id` without the history** (`/v1/responses`). This
+  server keeps no response store, and a request that sent only its new input
+  with `previous_response_id` was answered without its context. It is now
+  refused with a 400 that asks for the history. A request that sends its
+  history too is served as before.
+- **Clients that offer HTTP/2** (#165). Java's HTTP client, and editors
+  built on it, offer to switch every plain-HTTP request to HTTP/2. The server
+  answered over HTTP/1.1 as it should, but logged two misleading warnings per
+  request, one of them suggesting a WebSocket library. It now logs one plain
+  line per protocol, and the HTTP parser is pinned, so an added package
+  cannot change it.
+
 ## 0.18.0
 
 Speech to text on the NPU, larger and non-square images, sessions a harness
