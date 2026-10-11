@@ -5,36 +5,50 @@
 # halogen-flash-server
 
 **halogen™ is the fastest way to run Qwen3.8-Flash-Next on AMD Strix Halo,
-and it does not get there by spending fewer bits.**
+and it is built for agents: deep into a long session, each turn starts
+answering in about 1.6 seconds.**
 
 Every kernel is written for this one GPU and this one model family. No
 general-purpose runtime, no portability layer, no fallback path. That is why it
 can do things a general engine cannot, and why it runs on exactly one piece of
 silicon.
 
-| measured on the reference machine | halogen-flash |
+| 0.18.0, the default configuration | halogen-flash |
 |---|---|
-| prefill, 8,192-token prompt | **1,584 tok/s** (5.2 s) |
-| prefill, 32,768-token prompt | **1,567 tok/s** (20.9 s) |
-| prefill, 131,072-token prompt | **1,517 tok/s** (86.4 s) |
-| follow-up turn at 100,000 tokens of context | **~2 s** (prompt cache, on by default) |
-| decode, served with the draft head, at 32,768 tokens of context | **46.0 tok/s** |
-| decode, coding-agent turn, draft head + prompt lookup | **55.7 to 56.3 tok/s** |
-| decode, serial greedy, at 1,500 / 32,768 tokens of context | **37.6 / 34.1 tok/s** |
+| decode | **up to 94 tok/s** on repetitive output · **73** writing code · **54** prose |
+| prefill: 8,192 / 32,768 / 131,072-token prompt | **1,821 / 1,740 / 1,675 tok/s** |
+| an agent turn, 30,000 to 96,000 tokens of context | **4.2 s** (first token in **1.6 s**) |
+| the first turn of a 34,000-token agent prompt, cold | **21 s** |
+| decode: editing code / an agent's tool call / six other languages | **81 / 71 / 52 tok/s** |
 
-Every row is from [Measured](#measured), which gives the conditions: AMD Ryzen
-AI Max+ 395, 128 GB, ROCm 7.14.0, the image's default configuration, and about
-85 W of sustained package power. Read them before comparing a number from
-another machine, particularly the power envelope and the IOMMU setting.
-Prefill barely decays with depth: 131,072 tokens run at 97% of the 32,768
-rate.
+**What each row is.** The agent turns are three sessions of a coding agent
+fixing a bug in a Python repository: each turn sends the whole conversation
+back with the model's last tool call and a tool result of 800 to 3,000
+tokens appended, and the time runs from the request to the last byte of the
+answer, on the client's clock (the median of 115 turns, about 200 tokens of
+answer each). Decode is measured on the kind of text each row names. The
+best case is five short prompts whose answer repeats itself ("print the word
+red ten times" and four like it), shown so it can be compared like for like
+with other figures of that kind. Prefill is the image's own `sweep`, on a
+synthetic prompt; real text through the chat template runs about 8 to 12%
+slower, which is why the cold first turn takes 21 s for 34,000 tokens.
 
-**Precision: 5.53 bpw**, measured from the checkpoint's own tensor table rather
-than quoted from a format name. That is across all 179.55B parameters, or 4.55
-bpw across the trunk and experts with the FP8 n-gram lookup table set aside.
-[`docs/QUANT.md`](docs/QUANT.md) gives the breakdown by tensor family and says
-how the figure is derived, so it can be checked with arithmetic rather than
-taken on trust.
+All of it is the published 0.18.0 image at its defaults (the v2 checkpoint,
+the prompt cache on, greedy, thinking off) on an AMD Ryzen AI Max+ 395 with
+128 GB, at about 85 W of sustained package power. [Measured](#measured) has
+every number for both checkpoints. The prefill rows, and a decode mean over
+ten prompt shapes, reproduce with one command from the image
+([how](#served-throughput-end-to-end-over-http)); the agent turns and the
+decode by kind of text are measured from the client side, over the same
+OpenAI-compatible API you use. Prefill barely decays with depth: 131,072
+tokens run at 96% of the 32,768 rate.
+
+**Precision: 4.16 bpw** across the trunk, the experts and the draft head of
+the default checkpoint (v2), or 5.25 bpw across all 179.55B parameters with
+the FP8 n-gram lookup table counted in. Both are measured from the files
+rather than quoted from a format name. [`docs/QUANT.md`](docs/QUANT.md) gives
+the breakdown by tensor family, so it can be checked with arithmetic rather
+than taken on trust.
 
 At temperature 0, output is byte-identical to serial greedy decode.
 Speculation here is a pure speed optimization, verified on every release, not
@@ -1052,6 +1066,63 @@ neighbours to it, not to `free`.
 
 ## Measured
 
+### 0.18.0, both checkpoints
+
+The published 0.18.0 image at its defaults (the prompt cache on unless a row
+says otherwise, greedy, thinking off), one checkpoint a machine: AMD Ryzen AI
+Max+ 395, 128 GB, Ubuntu 24.04 with kernel 6.17 and no kernel boot options,
+about 85 W of sustained package power, the GPU clock at a median 2,358 MHz
+during prefill and 2,500 to 2,750 MHz during decode. On the reference machine
+described below, the same image reads within about 1% of the v2 prefill
+rows.
+
+| | v2 (the default) | ht43 |
+|---|---|---|
+| agent turn, 30,000 to 96,000 tokens of context: median turn | **4.2 s** | **5.3 s** |
+| agent turn: median first token (90th percentile) | **1.6 s** (2.3 s) | **1.6 s** (2.4 s) |
+| agent turn: median answer, and its decode | 196 tokens at 83 tok/s | 263 tokens at 77 tok/s |
+| first turn of a 34,174-token agent prompt, cold | 21.2 s | 22.1 s |
+| decode, writing code | 72.9 tok/s | 69.0 tok/s |
+| decode, editing ~8,000 tokens of code | 81.0 tok/s | 78.6 tok/s |
+| decode, an agent's tool call after reading a ~3,000-token file | 70.6 tok/s | 72.9 tok/s |
+| decode, English prose | 54.3 tok/s | 52.3 tok/s |
+| decode, six other languages | 52.2 tok/s | 49.7 tok/s |
+| decode, explaining an ~8,000-token document | 54.8 tok/s | 54.2 tok/s |
+| decode, repetitive output, five prompts | 83 to 94 tok/s; 61 on one word 300 times | 80 to 91 tok/s; 63 on one word 300 times |
+| prefill, `sweep`, cache off: 8,192 / 32,768 / 131,072 | 1,821 / 1,740 / 1,675 tok/s | 1,630 / 1,604 / 1,551 tok/s |
+| prefill, `sweep`, cache on (a cold request): 8,192 / 32,768 | 1,646 / 1,806 tok/s | 1,502 / 1,647 tok/s |
+| `sweep` decode over ten prompt shapes (tg128) | 58.5 tok/s | 55.7 tok/s |
+| `bench` with drafting over ten prompt shapes, mean | 59.7 tok/s | 59.6 tok/s |
+
+**The agent turns** are three sessions a checkpoint. Each opens with a
+system prompt, four tools (read, edit and write a file, run the tests), a
+task, and file reads already answered, 27,000 to 34,000 tokens in all, so
+its first turn is a cold prompt; each later turn sends the conversation back with
+the model's own tool call and a tool result of 800 to 3,000 tokens appended,
+until the prompt passes 96,000 tokens, answers capped at 512 tokens. The prompt cache serves everything but
+the new tokens, which is why the first token arrives in about 1.6 s at any
+depth. The two checkpoints write different answers to the same turn, so their
+turn times differ by the answers' length as much as by speed: compare the
+first-token and decode rows. Times are the client's, over HTTP, from the
+request to the last byte.
+
+**Decode by kind** is one request at a time with the prompt cache off: eight
+short coding prompts, four edits over ~8,000 tokens of standard-library
+source, four tool-calling turns, eight English essays, six essays in Chinese,
+Spanish, German, Russian, Japanese and French, two explanations of a license
+text. Speed depends on how predictable the text is, so quote the row for the
+kind of text you run, never one number for all of them. **The repetitive
+prompts** ("print the word red ten times", count to 300, the alphabet on 25
+lines, a sentence 40 times, one word 300 times) are the best case, here so it
+can be compared like for like.
+
+**Prefill on real text is slower than the `sweep` rows.** The sweep repeats
+a synthetic prompt; the agent sessions' cold first turns, real source code
+through the chat template with tools, ran 8 to 12% below the sweep's cold
+rate.
+
+### Earlier releases, on the reference machine
+
 **Conditions, because they change the numbers:** AMD Ryzen AI Max+ 395
 (Radeon 8060S, gfx1151), 128 GB unified memory, ROCm 7.14.0, and **about 85 W
 of sustained package power**, sampled from sysfs during a 32,768-token prefill
@@ -1181,23 +1252,21 @@ Two levers move these and both are one environment variable:
 
 ### Served throughput, end to end over HTTP
 
-The prefill numbers above are the engine's own prefill bench. Through the full
-stack of chat template, tokenizer, HTTP and SSE, the image's own `sweep` mode
-measures **1,502 tok/s at pp8192 and 1,499 at pp32768** on 0.14.1 with the
-prompt cache off (1,237 and 1,385 on 0.14.0 in the same session). With the
-cache on, the default, a cold request reads 1,415 and 1,530; it also stores
-that request's state for the next turn. `bench`
-over ten real prompt shapes measures **52.5 tok/s mean with speculation** on
-0.14.1 (min 43.8 on chat, max 58.4 on code; 2.46 tokens committed per round;
-52.7 on 0.14.0 in the same session). 0.13.8 read 44.4 on the same instrument
-(1.68 a round); the difference is the draft head's wiring, which since
-0.14.0 reads the model's four residual streams as the reference
-implementation does and drafts two tokens ahead.
-Acceptance depends on how predictable the text is, so quote the mean with the
-prompt set named, never a single shape.
+On 0.18.0 with the default checkpoint (the conditions of [0.18.0, both
+checkpoints](#0180-both-checkpoints)), the image's own `sweep` mode measures
+**1,821 tok/s at pp8192, 1,740 at pp32768 and 1,675 at pp131072** through the
+full stack of chat template, tokenizer, HTTP and SSE, with the prompt cache
+off. With the cache on, the default, a cold request reads 1,646 and 1,806 at
+8,192 and 32,768; it also stores that request's state for the next turn.
+`bench` over ten prompt shapes measures **59.7 tok/s mean with speculation**
+(about 50 on prose at the low end, about 70 on code at the high end; 2.59
+tokens committed per round; ht43 reads 59.6). On 0.14.1 the same two
+instruments read 1,502 / 1,499 tok/s and 52.5 tok/s. Acceptance depends on
+how predictable the text is, so quote the mean with the prompt set named,
+never a single shape.
 
 That run also re-checks the identity property on live traffic: **every drafter
-produced byte-identical output on every case.**
+produced byte-identical output on every case**, on both checkpoints.
 
 Reproduce the numbers with the benchmarks baked into the image:
 
@@ -1966,28 +2035,31 @@ takes 2 s or more. `HALOGEN_KV_POOL_POSITIONS=262144` still leaves more of the
 table cached, and `786432` buys a third resident conversation where the
 machine has the headroom for it.
 
-**Speed by concurrency.** Measured at the engine's own protocol on the
-published image at its defaults (the 8-stream row with `HALOGEN_KV_SLOTS=8`):
-1,500-token prompts of prose, 600 tokens generated each, greedy, rates over
-the window in which every stream is generating. The one-stream rows are the
-same measurement, so the rows compare; the reproducible one-stream figure is
-the built-in `bench` below.
+**Speed by concurrency.** Measured on the published 0.18.0 image over the
+OpenAI-compatible API, in the conditions of [0.18.0, both
+checkpoints](#0180-both-checkpoints), with `HALOGEN_KV_SLOTS=8` so that all
+eight streams are admitted at once. Each stream has its own short prompt and
+generates 384 tokens with thinking off; greedy streams write code, sampled
+streams (temperature 0.7) write English prose. The total counts every
+stream's tokens over the window in which all of them are generating; the
+per-stream figure is the slowest stream's. Two runs each, shown as a range
+where they differ.
 
-| streams generating | total tokens/s | per stream | byte-identical to alone |
-|---|---|---|---|
-| 1, speculative (the default) | 41.3 | 41.3 | yes |
-| 1, serial | 36.5 | 36.5 | |
-| 2 | 55.2 | 27.5 to 27.6 | 2 of 2 |
-| 4 | 74.8 | 18.6 to 18.7 | 4 of 4 |
-| 8 | 87.8 | 10.9 to 11.0 | 8 of 8 |
+| streams generating | v2 total, code (greedy) | v2 per stream | v2 total, prose (sampled) | ht43 total, code / prose |
+|---|---|---|---|---|
+| 1 | 70 to 72 tok/s | 70 to 72 | 55 to 58 tok/s | 69 / 51 to 54 |
+| 2 | 81 tok/s | 40 | 71 to 75 tok/s | 77 to 79 / 71 to 73 |
+| 4 | 84 to 85 tok/s | 21 | 82 tok/s | 83 / 81 |
+| 8 | 107 to 108 tok/s | 13 | 105 to 106 tok/s | 106 / 104 |
 
-Re-measured on the 0.6.0 image in one session: 2 streams 56.5 total, 4
-streams 77.1, every stream byte-identical to alone. Prompt lookup does not
-change these rows: it drafts only while a request is the only one generating
-(see below). Since 0.17.0 two streams generating together both speculate with
-the draft head in one forward pass, so two streams now run faster than the
-2-stream row shows, each still byte-identical to alone. At four and eight
-streams a batched step is still the cheapest way to get one token per stream
+Every stream emits byte-identical tokens to the same request run alone, which
+is gated on every release (see the identity properties under
+[Quality](#quality-what-is-measured-and-what-is-not)). The earlier table, from
+0.6.0 on the 0.14 checkpoint with 1,500-token prose prompts, read 41.3 / 55.2
+/ 74.8 / 87.8 tok/s at one / two / four / eight streams. One stream alone
+drafts from both the draft head and the request's own text; two streams
+generating together both draft with the head in one forward pass; at four and
+eight streams a batched step is the cheapest way to get one token per stream
 on this hardware.
 
 **Slots are a latency policy, not a memory decision.** Raising
