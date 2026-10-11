@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.18.0
+
+Speech to text on the NPU, larger and non-square images, sessions a harness
+can keep and fork, and a prompt cache fix for clients that change their newest
+message every turn. The Flash checkpoints are unchanged. At temperature 0 the
+output is still byte-identical to serial greedy decode. For the reports:
+issues #152 ([@dardeaw](https://github.com/dardeaw)), #153
+([@FrancescoBrunoDev](https://github.com/FrancescoBrunoDev)) and #158
+([@Rutimka](https://github.com/Rutimka)).
+
+### Added
+
+- **Speech to text on the NPU** (#153). Name `qwen3-asr-0.6b` or
+  `qwen3-asr-1.7b` (Qwen3-ASR) in `HALOGEN_NPU_MODELS` and
+  `/v1/audio/transcriptions` answers on the same port, in OpenAI's shape. It
+  takes a WAV file of up to 20 minutes or 25 MiB, an optional `language` and
+  `prompt`, and `response_format` `json` or `text`. Any model name reaches the
+  loaded speech model, so a client that sends `whisper-1` works unchanged. See
+  the NPU page's *Speech to text* section.
+- **Images up to 1024x1024, square or not** (#152). `flux2-klein-4b` now draws
+  20 sizes, from 256x256 to 1024x1024, landscape and portrait included. `size`
+  takes `WxH`, and a size it does not serve is refused with the list. The
+  model's files changed, so start once with `HALOGEN_DOWNLOAD` set.
+- **Sessions: keep, fork and join**, opt-in. A client can keep a
+  conversation's state under a name and start several requests from it at
+  once, from inside a reply too (`HALOGEN_FORK=1`, off by default). See the
+  README's *Sessions* section.
+
+### Fixed
+
+- **Prompt cache: a client that changes or drops part of its newest message
+  on the next turn** (some agent harnesses add per-turn context there) now
+  continues in its own cache space instead of copying the whole prompt every
+  turn, and with `HALOGEN_CACHE_DIR` the disk cache no longer writes a full
+  copy of the conversation per request (#158). Two new `/metrics` series,
+  `halogen:cache_last_message_rewrites_total` and
+  `halogen:cache_disk_cut_back_total`.
+- **`steps` on image requests** (#152). The field was accepted and ignored.
+  FLUX.2-klein draws in four steps, so any other value is now refused with a
+  clear error.
+- **`/health` names every NPU model that is loaded.** `npu.loaded` listed
+  the first model's device files only.
+- **`flux2-klein-4b` read its prompt with its own tokenizer only when it was
+  listed first in `HALOGEN_NPU_MODELS`.** Listed after another NPU model, it
+  could draw from that model's reading of the prompt. It now always uses its
+  own.
+- **An image size that did not fit in the NPU's memory beside the other NPU
+  models stopped the server.** That request now gets an error and the server
+  keeps running.
+
 ## 0.17.5
 
 Faster prompt reading and drafted decoding, prompt progress you can ask for

@@ -63,6 +63,7 @@ the changelog can credit them. See [Community](#community).
   [Codex and the Responses API](#codex-and-the-responses-api),
   [Claude Code and the Messages API](#claude-code-and-the-anthropic-messages-api),
   [from an agent harness](#from-an-agent-harness),
+  [sessions](#sessions-keep-fork-and-join),
   [as a classifier](#using-it-as-a-classifier),
   [small models on the NPU](#small-models-on-the-npu)
 - **[Give it a machine of its own](#give-it-a-machine-of-its-own)**: what this
@@ -118,7 +119,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 That is the whole thing. It fetches the weights on first start (about 111 GiB, so
@@ -169,7 +170,7 @@ podman run --rm -p 8731:8731 \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 The weights repo carries the tokenizer, so one `-v` is all either form needs.
@@ -567,6 +568,12 @@ request has run) and `halogen:build_info`. A scrape never stalls on a busy
 engine: the cache numbers are the engine's last report, refreshed in the
 background, and `halogen:cache_stats_age_seconds` says how old it is.
 `GET /cache` keeps the full report. Always on, no flag.
+Since 0.18.0 (#158), `halogen:cache_last_message_rewrites_total` counts requests
+that resumed inside the previous request's last message (a client that changes
+or drops part of it each turn) and continued in that conversation's cache, and
+`halogen:cache_disk_cut_back_total` counts the times the disk tier trimmed a
+conversation's files back to where its next request resumed instead of writing
+a second copy.
 
 **Cache and pool occupancy in the log** (since 0.11.5; #73): every
 request's `serve_api:` line carries the cached share of its prompt, the
@@ -750,6 +757,19 @@ takes minutes is visible while it runs rather than only in the `serve_api:`
 line at its end. `/health` reports `busy_for_s` while a request is in
 flight.
 
+### Sessions: keep, fork and join
+
+A harness that runs several branches from one conversation can ask the server to keep that conversation's state under a name and start new requests from it. Set `HALOGEN_FORK=1` to turn it on. It is off by default.
+
+    # keep the state where this reply ends, under the name plan-7f3a
+    curl -s localhost:8731/v1/chat/completions -H 'X-Halogen-Keep: plan-7f3a' -d '{"messages": [...]}'
+    # three workers start from it at once, each sending the history, the reply and its own message
+    curl -s localhost:8731/v1/chat/completions -H 'X-Halogen-From: plan-7f3a' -d '{"messages": [..., "do part A"]}'
+    # join: continue from one name and keep the result under another
+    curl -s localhost:8731/v1/chat/completions -H 'X-Halogen-From: plan-7f3a' -H 'X-Halogen-Keep: plan-7f3b' -d '{...}'
+
+Every request is an ordinary request, and a server without the setting answers it the same way. The response header `X-Halogen-From` says `used`, `unmatched` (the history does not repeat the kept one) or `unknown`, and the last two are answered as usual. To branch from inside a reply, send part of it as the last assistant message (`continue_final_message` on Chat Completions, a final assistant message on Messages and Responses). The same headers work on `/v1/messages` and `/v1/responses`, for harnesses that can set request headers. Names are released after 10 minutes unused, at most 8 live at once (`HALOGEN_FORK_TTL_S`, `HALOGEN_FORK_HANDLES`), and `GET /halogen/handles` lists them. With `HALOGEN_CACHE_DIR` set they survive a restart. **Every client of the server shares one set of names.** Keep the port private or set `HALOGEN_API_KEY`, and use names other clients cannot guess.
+
 ### Using it as a classifier
 
 The model can score a fixed set of labels in one forward pass. End the prompt
@@ -766,9 +786,11 @@ The server can also run small models on the Ryzen AI NPU, beside the Flash
 model and behind the same port: decisions (`decider-0.8b`), embeddings
 (`qwen3-embedding-0.6b`), reranking (`qwen3-reranker-0.6b`), moderation
 (`qwen3guard-gen-0.6b`, on `/v1/moderations`), text generation for
-summaries and other short jobs (`qwen3.5-2b`, on `/v1/chat/completions`) and
-images (`flux2-klein-4b`, on `/v1/images/generations`), or your own fine-tune
-of one of the first four. Add the NPU to the Quickstart's command:
+summaries and other short jobs (`qwen3.5-2b`, on `/v1/chat/completions`),
+images up to 1024x1024 (`flux2-klein-4b`, on `/v1/images/generations`) and
+speech to text (`qwen3-asr-0.6b` or `qwen3-asr-1.7b`, on
+`/v1/audio/transcriptions`), or your own fine-tune of one of the first four.
+Add the NPU to the Quickstart's command:
 
 ```
   --device /dev/accel/accel0 -v /opt/xilinx/xrt:/opt/xilinx/xrt:ro \
@@ -972,7 +994,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_POOL_POSITIONS=262144 \
   -e HALOGEN_KV_SLOTS=2 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 **The smallest footprint at the full context.** The prefill arena halves.
@@ -988,7 +1010,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 **If 131k of context is enough.** The pool cannot be smaller than one
@@ -1004,7 +1026,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 **Beside other GPU servers, count the hardware queues.** Another project
@@ -1180,8 +1202,8 @@ produced byte-identical output on every case.**
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.17.5 bench serial,mtp 256 low 3
-podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.17.5 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.0 bench serial,mtp 256 low 3
+podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.0 sweep -p 8192,32768 -n 128
 ```
 
 Run the sweep with the prompt cache off, as above. It repeats one prompt per
@@ -1357,7 +1379,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_CHECKPOINT=/models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 Name any shard of a split; the siblings are found by name. With
@@ -1524,7 +1546,7 @@ podman run --rm \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5 \
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0 \
   convert /models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf /models/flash-next-iq4xs.hgn
 ```
 
@@ -1566,7 +1588,7 @@ podman run --rm \
   --device /dev/kfd --device /dev/dri --group-add keep-groups \
   --ipc=host --ulimit memlock=-1:-1 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5 \
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0 \
   MODE [FILE] [flags]
 ```
 
@@ -2373,7 +2395,7 @@ podman run --rm --name halogen -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
   -v ~/halogen-records:/records -e HALOGEN_RECORD_DIR=/records \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 The startup log then says `request records ON in /records`, with the text

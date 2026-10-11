@@ -958,6 +958,9 @@ HALOGEN_REASONING_EFFORT HALOGEN_RECORD_DAYS HALOGEN_RECORD_DIR HALOGEN_RECORD_G
 HALOGEN_RECORD_TEXT HALOGEN_REPETITION_PENALTY HALOGEN_SSE_KEEPALIVE_S \
 HALOGEN_TEMPERATURE HALOGEN_TEMPLATE_UNCHECKED HALOGEN_THINKING_ANSWER_ROOM \
 HALOGEN_TOKENIZE_REUSE HALOGEN_TOP_K HALOGEN_TOP_P"
+
+FE_ONLY_FLAGS="$FE_ONLY_FLAGS HALOGEN_FORK_HANDLES"
+
 ENGINE_ENV_U=()
 for _v in $FE_ONLY_FLAGS; do ENGINE_ENV_U+=(-u "$_v"); done
 unset _v
@@ -1209,6 +1212,8 @@ PINS
   [ "$part" = devices ] && sz=0 || sz=$(wc -c < "$d/$id.hnpw" | tr -d ' ')
   dk=0
   { [ "$part" = devices ] || [ "$own" = "$id" ]; } && dk=$(du -sk "$d/devices" | awk '{print $1}')
+
+  [ "$part" != devices ] && [ -d "$d/enc" ] && dk=$(( dk + $(du -sk "$d/enc" | awk '{print $1}') ))
   NPU_NEED_K=$(( ${NPU_NEED_K:-0} + sz / 1024 + dk ))
 }
 
@@ -1357,7 +1362,7 @@ npu_memlock() {
 }
 
 start_npu_engine() {
-  local gpu="$1" port="${HALOGEN_NPU_PORT:-8740}" ids id n=0 first=1 rc dev w tokd own
+  local gpu="$1" port="${HALOGEN_NPU_PORT:-8740}" ids id n=0 first=1 rc dev w tokd own enc
   local bin="${_hg_npu_bin:-/usr/local/bin/halogen-npu}"
   local -a nargs
   npu_retired || exit 1
@@ -1370,16 +1375,20 @@ start_npu_engine() {
   NPU_API_ARGS=(--npu "127.0.0.1:$port")
   nargs=(listen)
   for id in $ids; do
+    enc=""
     case "$id" in
       /*) npu_finetune_ready "$id" || exit 1
           dev="$NPU_FT_DEV"; w="$NPU_FT_W"; tokd="${id%/}" ;;
       *) npu_model_ready "$id" "$NPU_DIR" || exit 1
          own=$(npu_devices_of "$id")
          if [ "$own" != "$id" ]; then npu_model_ready "$own" "$NPU_DIR" devices || exit 1; fi
-         dev="$NPU_DIR/$own/devices"; w="$NPU_DIR/$id/$id.hnpw"; tokd="$NPU_DIR/$id/tokenizer" ;;
+         dev="$NPU_DIR/$own/devices"; w="$NPU_DIR/$id/$id.hnpw"; tokd="$NPU_DIR/$id/tokenizer"
+
+         [ -f "$NPU_DIR/$id/enc/devices.hnpm" ] && enc="$NPU_DIR/$id/enc" ;;
     esac
     if [ "$first" = 1 ]; then nargs+=("$dev" "$w" "127.0.0.1:$port"); NPU_TOK1="$tokd"; first=0
     else nargs+=(--model "$dev" "$w"); fi
+    [ -n "$enc" ] && nargs+=(--model "$enc" "$enc/weights.hnpw")
     NPU_API_ARGS+=(--npu-tokenizer "$tokd")
   done
   npu_memlock "$NPU_NEED_K" || exit 1

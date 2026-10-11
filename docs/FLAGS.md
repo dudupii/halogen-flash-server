@@ -129,6 +129,15 @@ before being offered.
 | `HALOGEN_RECORD_GIB` | `2` | The size cap of the records directory, in GiB, over everything in it. Past it, new records are dropped and counted (`/health`, `request_records.dropped_cap`), and requests are answered as usual. |
 | `HALOGEN_RECORD_DAYS` | `90` | How many days of records to keep. Older days (UTC) are removed at start and when the date changes, together with any stored text no remaining record refers to. `0` keeps everything. |
 
+## Sessions: keep, fork and join
+
+| flag | default | meaning |
+|---|---|---|
+| `HALOGEN_FORK` | *(unset)* = off | Let a client keep a conversation's state under a name and start later requests from it. Off by default. On, `/v1/chat/completions`, `/v1/messages` and `/v1/responses` read two request headers. `X-Halogen-Keep: <name>` keeps the state where this reply ends. `X-Halogen-From: <name>` starts a request from a kept state when the request repeats that conversation, either with more messages after the kept reply (tool calls and their results included) or with part of the reply as the last message, to branch from inside it (`continue_final_message` on Chat Completions, a final assistant message on the other two). Several requests can start from one name at once (a fork), and one request can start from a name and keep another (a join). The response header `X-Halogen-From` says `used`, `unmatched` or `unknown`. The last two are answered as ordinary requests, so a stale name costs time, never a wrong answer. `GET /halogen/handles` lists the live names and `DELETE /halogen/handles/<name>` releases one. With `HALOGEN_CACHE_DIR` set, kept states survive a restart with the same settings. **Every client of the server shares one set of names.** Any client that can reach the port (any key holder, with `HALOGEN_API_KEY`) can use or release any name, so use names other clients cannot guess and keep the port private. |
+| `HALOGEN_FORK_HANDLES` | `8` | The most names kept at once. A request that asks to keep one more is answered as usual and nothing is kept. Release a name to make room. |
+| `HALOGEN_FORK_TTL_S` | `600` | A name not used for this many seconds is released. |
+| `HALOGEN_FORK_GIB` | `2` | The most host memory kept states may hold, in GiB (each name holds about 0.2 GiB). Kept states also take at most half of the KV pool. A request that would pass either limit is answered as usual, nothing is kept, and the log says which limit. Changing `HALOGEN_FORK`, `HALOGEN_FORK_GIB` or `HALOGEN_FORK_TTL_S` starts the disk cache (`HALOGEN_CACHE_DIR`) cold. |
+
 ## Troubleshooting
 
 | flag | default | meaning |

@@ -2,7 +2,7 @@
 
 The server can run small models on the Ryzen AI NPU beside the Flash model, behind the same port. Name them in
 `HALOGEN_NPU_MODELS`, and a request picks one by its `model`. Every other request goes to the Flash model, as before.
-Six kinds of model run there:
+Seven kinds of model run there:
 
 - **Decisions** with `decider-0.8b` (a Qwen3.5-0.8B classifier). Give a text and a question with 2 to 10 options, and
   get a probability for every option from one pass.
@@ -11,8 +11,10 @@ Six kinds of model run there:
 - **Moderation** with `qwen3guard-gen-0.6b` (Qwen3Guard-Gen-0.6B). Is a prompt, or a reply in its conversation, safe?
 - **Text generation** with `qwen3.5-2b` (Qwen3.5-2B, thinking off). Summaries and other short jobs, beside the Flash
   model.
-- **Images** with `flux2-klein-4b` (FLUX.2-klein-4B). Icons, diagrams, illustrations and placeholders at 256x256 or
-  512x512, on `/v1/images/generations`.
+- **Images** with `flux2-klein-4b` (FLUX.2-klein-4B). Icons, diagrams, illustrations and placeholders from 256x256 up
+  to 1024x1024, square or not, on `/v1/images/generations`.
+- **Speech to text** with `qwen3-asr-0.6b` or `qwen3-asr-1.7b` (Qwen3-ASR). Recordings up to 20 minutes, on
+  `/v1/audio/transcriptions`.
 
 Larger sizes of the first three are named the same way (see [Larger sizes](#larger-sizes)). Your own fine-tune of any of the first four runs too. See [Your own model](#your-own-model).
 
@@ -53,7 +55,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_NPU_MODELS=decider-0.8b,qwen3-embedding-0.6b,qwen3-reranker-0.6b,qwen3guard-gen-0.6b,qwen3.5-2b \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.17.5
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.0
 ```
 
 `HALOGEN_DOWNLOAD` fetches the files of the NPU models that `HALOGEN_NPU_MODELS` names, into `/models/npu`, and the
@@ -64,8 +66,8 @@ the folder names, and the guard and the reranker share the embedder's device fil
 With compose, use `docker-compose.npu.yml`, which runs this same single container. The two-container `docker-compose.yml`
 starts no NPU engine.
 
-The NPU models' files stay in memory beside the Flash model's, a few GB in all, and about 8 GB more with
-`flux2-klein-4b`. The Flash model runs somewhat slower
+The NPU models' files stay in memory beside the Flash model's, a few GB in all, about 8 GB more with
+`flux2-klein-4b`, about 1.6 GB more with `qwen3-asr-0.6b`, and about 4 GB with `qwen3-asr-1.7b`. The Flash model runs somewhat slower
 while the NPU works, since the two share the memory bus and the chip's power budget.
 
 ## Larger sizes
@@ -218,7 +220,10 @@ curl -s localhost:8731/v1/images/generations -H 'Content-Type: application/json'
        "size": "512x512", "n": 1, "seed": 7}'
 ```
 
-- `size`: `256x256` or `512x512`. `auto` is `512x512`.
+- `size`: `WxH`, one of `256x256`, `512x512`, `768x768`, `1024x1024`, `768x512`, `512x768`, `1024x768`, `768x1024`,
+  `1024x576`, `576x1024`, `640x512`, `512x640`, `896x512`, `512x896`, `1024x448`, `448x1024`, `1024x512`, `512x1024`,
+  `1024x640`, `640x1024`. `auto` is `512x512`. Any other size is refused with the list.
+- `steps` (or `num_inference_steps`): FLUX.2-klein draws in four steps. Any other value is refused.
 - `n`: one to four images. They are drawn one after another.
 - `response_format`: `b64_json` (the default) or `url`, a `data:` URL of the PNG.
 - `output_format`: `png` only.
@@ -229,6 +234,37 @@ curl -s localhost:8731/v1/images/generations -H 'Content-Type: application/json'
 
 The model holds about 8 GB of the host's memory while it is loaded. One image request runs at a time on the NPU,
 queued with the other NPU models' work.
+
+A 512x512 image takes about 3 seconds and a 1024x1024 image about 10. A 1024x1024 image uses about 0.7 GB of working
+memory while it draws.
+
+## Speech to text
+
+Name `qwen3-asr-0.6b` or `qwen3-asr-1.7b` in `HALOGEN_NPU_MODELS` and it is fetched and served. It transcribes a
+recording on `/v1/audio/transcriptions`, in OpenAI's multipart shape:
+
+```
+curl -s localhost:8731/v1/audio/transcriptions -F model=qwen3-asr-1.7b -F file=@meeting.wav
+```
+
+- `file`: a WAV file, PCM (8 to 32-bit) or float, any sample rate, mono or more channels. Other formats are refused
+  for now.
+- Recordings of up to 20 minutes or 25 MiB, whichever comes first, in one request. A longer one is refused with both
+  limits named.
+- `model`: any name reaches the loaded speech model, so a client that sends `whisper-1` works unchanged. One speech
+  model is served at a time. Name `qwen3-asr-0.6b` or `qwen3-asr-1.7b` in `HALOGEN_NPU_MODELS`, not both.
+- `language`: optional, a name (`Italian`) or a two-letter code (`it`). Without it the model names the language
+  itself.
+- `prompt`: optional context for the model, such as names or terms the recording uses.
+- `response_format`: `json` (the default, `{"text": ...}`) or `text`. `stream` is refused.
+
+The 1.7B is the more accurate of the two, and the 0.6B the lighter. One transcription runs at a time on the NPU,
+queued with the other NPU models' work.
+
+A speech model and the image sizes above 512x512 both need a large share of the NPU's memory, which every NPU model of
+the server shares. With a speech model loaded beside other NPU models, a larger image may answer an error that says
+so. The server keeps running, and 256x256 and 512x512 always fit. `qwen3-asr-1.7b` leaves no room for the larger sizes
+once it has transcribed. Without a speech model, every size fits beside the other NPU models.
 
 <a id="your-own-model"></a>
 ## Your own model
@@ -283,6 +319,8 @@ changes no result.
 - A generation prompt is up to 16,384 tokens (its template counts). The prompt and its answer share 18,432 positions,
   so an answer stops there at the latest.
 - A decision takes 2 to 10 options.
+- A transcription takes a WAV file of up to 20 minutes or 25 MiB.
+- With a speech model loaded beside other NPU models, images above 512x512 may not fit (an error says so).
 - The NPU models are served in the default mode only, not in the two-container setup (`engine` and `api`).
 
 <a id="host"></a>
