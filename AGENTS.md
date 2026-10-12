@@ -95,8 +95,8 @@ whether it starts and how it behaves:
   layout, `524288` the default. `HALOGEN_MAX_TOK=16384` gives back about
   4.4 GiB of working memory (1.5 on w4b) for ~9% of prefill speed when the
   pool cannot go lower. Never raise `HALOGEN_MAX_TOK` to the context. If the machine
-  must also run other things, the README's [If you must share
-  it](README.md#if-you-must-share-it) has what each layout takes and a
+  must also run other things, the docs' [If you must share
+  it](docs/host-setup.md#if-you-must-share-it) has what each layout takes and a
   run command for each; the weights (62 GiB, 68 with w4b) are pinned in
   every one.
 - **A request reserves `prompt + max_tokens` positions when admitted** and

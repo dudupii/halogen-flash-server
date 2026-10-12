@@ -1,0 +1,216 @@
+# Measured
+
+## 0.18.0, both checkpoints
+
+The published 0.18.0 image at its defaults (the prompt cache on unless a row
+says otherwise, greedy, thinking off), one checkpoint a machine: AMD Ryzen AI
+Max+ 395, 128 GB, Ubuntu 24.04 with kernel 6.17 and no kernel boot options,
+about 85 W of sustained package power, the GPU clock at a median 2,358 MHz
+during prefill and 2,500 to 2,750 MHz during decode. On the reference machine
+described below, the same image reads within about 1% of the v2 prefill
+rows.
+
+| | v2 (the default) | ht43 |
+|---|---|---|
+| agent turn, 30,000 to 96,000 tokens of context: median turn | **4.2 s** | **5.3 s** |
+| agent turn: median first token (90th percentile) | **1.6 s** (2.3 s) | **1.6 s** (2.4 s) |
+| agent turn: median answer, and its decode | 196 tokens at 83 tok/s | 263 tokens at 77 tok/s |
+| first turn of a 34,174-token agent prompt, cold | 21.2 s | 22.1 s |
+| decode, writing code | 72.9 tok/s | 69.0 tok/s |
+| decode, editing ~8,000 tokens of code | 81.0 tok/s | 78.6 tok/s |
+| decode, an agent's tool call after reading a ~3,000-token file | 70.6 tok/s | 72.9 tok/s |
+| decode, English prose | 54.3 tok/s | 52.3 tok/s |
+| decode, six other languages | 52.2 tok/s | 49.7 tok/s |
+| decode, explaining an ~8,000-token document | 54.8 tok/s | 54.2 tok/s |
+| decode, repetitive output, five prompts | 83 to 94 tok/s; 61 on one word 300 times | 80 to 91 tok/s; 63 on one word 300 times |
+| prefill, `sweep`, cache off: 8,192 / 32,768 / 131,072 | 1,821 / 1,740 / 1,675 tok/s | 1,630 / 1,604 / 1,551 tok/s |
+| prefill, `sweep`, cache on (a cold request): 8,192 / 32,768 | 1,646 / 1,806 tok/s | 1,502 / 1,647 tok/s |
+| `sweep` decode over ten prompt shapes (tg128) | 58.5 tok/s | 55.7 tok/s |
+| `bench` with drafting over ten prompt shapes, mean | 59.7 tok/s | 59.6 tok/s |
+
+**The agent turns** are three sessions a checkpoint. Each opens with a
+system prompt, four tools (read, edit and write a file, run the tests), a
+task, and file reads already answered, 27,000 to 34,000 tokens in all, so
+its first turn is a cold prompt; each later turn sends the conversation back with
+the model's own tool call and a tool result of 800 to 3,000 tokens appended,
+until the prompt passes 96,000 tokens, answers capped at 512 tokens. The prompt cache serves everything but
+the new tokens, which is why the first token arrives in about 1.6 s at any
+depth. The two checkpoints write different answers to the same turn, so their
+turn times differ by the answers' length as much as by speed: compare the
+first-token and decode rows. Times are the client's, over HTTP, from the
+request to the last byte.
+
+**Decode by kind** is one request at a time with the prompt cache off: eight
+short coding prompts, four edits over ~8,000 tokens of standard-library
+source, four tool-calling turns, eight English essays, six essays in Chinese,
+Spanish, German, Russian, Japanese and French, two explanations of a license
+text. Speed depends on how predictable the text is, so quote the row for the
+kind of text you run, never one number for all of them. **The repetitive
+prompts** ("print the word red ten times", count to 300, the alphabet on 25
+lines, a sentence 40 times, one word 300 times) are the best case, here so it
+can be compared like for like.
+
+**Prefill on real text is slower than the `sweep` rows.** The sweep repeats
+a synthetic prompt; the agent sessions' cold first turns, real source code
+through the chat template with tools, ran 8 to 12% below the sweep's cold
+rate.
+
+## Earlier releases, on the reference machine
+
+**Conditions, because they change the numbers:** AMD Ryzen AI Max+ 395
+(Radeon 8060S, gfx1151), 128 GB unified memory, ROCm 7.14.0, and **about 85 W
+of sustained package power**, sampled from sysfs during a 32,768-token prefill
+alongside a 2,229 MHz median clock against the part's 2,900 MHz top state.
+
+**The IOMMU is off on the reference machine, and it is worth 13 to 16 percent
+of prefill.** Prefill is compute-bound, and on this hardware an enabled IOMMU
+is a power-budget tax rather than a memory-path one: with `iommu=pt` we
+measured the SoC drawing more power (122 to 127 W against 108 to 118) for lower
+shader clocks (2,357 to 2,409 MHz against 2,549 to 2,713) at the same
+temperature, and prefill fell from 460 to 385 tok/s at 2,048 tokens while every
+bandwidth-bound number held exactly. Bisected on one kernel, so it is the IOMMU
+and not the kernel version. We have not measured the IOMMU in translated mode, only off against
+passthrough, and this is one machine.
+
+The full kernel command line this was measured on is published under
+[The host settings these numbers were measured
+on](troubleshooting.md#the-host-settings-these-numbers-were-measured-on), because numbers you
+cannot reproduce are not much use.
+
+**Match the power envelope before comparing decode numbers.** It is the
+condition most easily left out and it moves these rows: an independent tester
+running a 70 W-limited handheld measured 11 to 12 percent under both the serial
+and the drafted figure below, consistently on both, which is the signature of a
+lower envelope rather than a disagreement about the engine. Prefill reproduced
+on that same machine.
+
+**These rows are w4b's**, 0.14's checkpoint with its quality sidecar (the
+default until 0.15.0), in the image's default configuration of their
+release; they were not re-measured on the default checkpoint since 0.15.0,
+which served at the same speed or faster in a same-session comparison: full 262,144 context, prompt cache on, tuned GEMM plan loaded.
+Prefill is a cold single-call prefill of real text; decode is greedy at
+temperature 0. Prefill is measured by the engine's own
+prefill bench; a served request with the default speculative drafter pays about
+2-3% more time-to-first-token, because the draft head prefills too. The prefill
+rows are 0.14.1's measurements, two runs each. The control was this same
+binary with 0.14.0's prefill kernels selected, so the two arms differ in
+those kernels and nothing else; it ran in the same session, on the plan this
+image bakes, at a median 2,220 MHz and 85 W, and it read 1.3 to 2.4 percent
+above the 0.5.3 rows it replaces. The serial decode rows are 0.2.0's and have not moved since:
+the releases between them changed the scheduler, the memory layout and one
+host-side sort, not the decode kernels. 0.6.0 moves the speculative rows
+twice, and both moves are draft-side: the sidecar now carries the draft
+head's own projections at 8 bits (its proposals are accepted more often), and
+the request's own text is a second draft source (the rows below the served
+one). **The four 0.12.0 rows are served, through this image, at the 1M
+configuration** (`HALOGEN_ROPE_YARN=4 HALOGEN_CTX=1048576`, which caps the
+prefill arena at 16,384 and turns the prompt cache off): one cold request
+each, synthetic non-compressible text, thinking off, 64 tokens generated,
+the rates the response's `timings` report, and the previous release beside
+each from the same session with the same prompt. Decode there is 64 tokens
+straight after a cold prefill, with the draft head, so it is a served rate
+in that shape (and its first steps read the lookup table from disk, since
+a 1M pool leaves the table little page cache), not the ten-prompt mean the
+32k row is. What moved between the releases is the model's sparse-attention
+indexer: its block select ran serial in the context length on one compute
+unit at decode and was a fifth of a 1M prefill pass, and its scoring kernel
+re-read the block keys once per 16 query rows; both are rewritten in 0.12.0
+with byte-identical results.
+
+| | halogen-flash |
+|---|---|
+| prefill @ 8,192 (0.14.1) | **1,584 tok/s** (TTFT 5.2 s; 1,268 on 0.14.0) |
+| prefill @ 32,768 (0.14.1) | **1,567 tok/s** (TTFT 20.9 s; 1,442 on 0.14.0) |
+| prefill @ 131,072 (0.14.1) | **1,517 tok/s** (86.4 s; 1,390 and 94.3 s on 0.14.0) |
+| follow-up turn at 100,000 tokens of context | **~2 s** (prompt cache on, the default) |
+| decode, serial greedy @ ctx 1,500 | **37.6 tok/s** |
+| decode, serial greedy @ ctx 8,000 | **36.1 tok/s** |
+| decode, serial greedy @ ctx 32,768 | **34.1 tok/s** |
+| decode, MTP speculation @ ctx 1,500 | **44.8 tok/s** prose, **49.9 tok/s** code (0.6.0 sidecar; 42.4 / 48.3 with the 0.5.x sidecar) |
+| decode, MTP speculation @ ctx 32,768, served (0.14.0) | **46.0 tok/s** mean over ten prompts (39.9 on 0.13.8 in the same session) |
+| prefill @ 258,794, served, 1M configuration (0.12.0) | **1,114 tok/s** (232 s; 1,086 on 0.11.10) |
+| prefill @ 1,004,581, served, 1M configuration (0.12.0) | **937 tok/s** (17.9 min; 790 and 21.2 min on 0.11.10) |
+| decode, MTP speculation @ ctx 258,794, served, cold (0.12.0) | **45.0 tok/s** (42.9 on 0.11.10) |
+| decode, MTP speculation @ ctx 1,004,581, served, cold (0.12.0) | **38.3 tok/s** (27.3 on 0.11.10) |
+| decode, coding-agent turn, MTP alone (0.6.0 control) | **49.1 tok/s** thinking off, **49.2** thinking on |
+| decode, coding-agent turn, MTP + prompt lookup (0.6.0) | **56.3 tok/s** thinking off, **55.7** thinking on |
+| decode, function-calling turn, MTP + prompt lookup (0.6.0) | **53.1 tok/s** thinking off (48.8 with MTP alone) |
+
+**The 0.6.0 rows are agent turns, not prose.** Each is the mean over six
+prompts: a real coding-agent conversation (SWE-agent trajectories over real
+repositories, driven by another model) or a function-calling dialogue, cut at
+the start of an assistant turn, ~1,000–1,800 tokens of context, 400 tokens
+generated, greedy. Prompt lookup drafts from the request's own text: when the
+last three tokens of the answer already occur earlier in the conversation, the
+three that followed are proposed as a chain and verified in one step, with the
+draft head's own proposal opening the chain. On a coding turn about half the
+generated tokens are such copies (tool-call arguments, paths, code quoting the
+file being edited), thinking on or off, which is why the gain over the head
+alone is 13–15% there, 6–9% on function-calling turns, and within noise on
+prose and code text (the head already takes what there is). Serial on the same
+prompts is 36.8 tok/s, so a coding-agent turn decodes at about 1.5x serial.
+Every one of those runs produced the serial run's tokens exactly. Prompt
+lookup runs while the request is the only one generating; with several
+conversations generating at once the scheduler batches them instead (the
+concurrency table below is unchanged by it).
+
+Decode barely moves with depth. Serial gives up about 7% going from 1,500 to
+32,768 tokens of context, a 22x increase. The 32,768 served figure is
+measured through the full HTTP stack rather than on a raw token fixture, which
+is the harder condition.
+
+Two levers move these and both are one environment variable:
+
+- **A tuned GEMM plan ships in the image and is on by default.** The matrix
+  library exposes many kernels per shape, and the image carries choices
+  measured on this hardware rather than picking at runtime
+  (`HALOGEN_MATMUL_TUNING_FILE`). It costs nothing in quality: paired
+  perplexity over 32,767 positions differs by 0.0006 nats, a confidence
+  interval spanning zero. It is also *deterministic*, since every process
+  reads the same decisions, so the same prompt keeps giving the same answer.
+- **The prompt cache is ON by default**, which is what makes the native context
+  usable in practice. A session whose prompt grows, whether an agent, a chat, or a
+  document you keep asking about, does not re-read its shared prefix. Only the
+  tokens you actually added get processed:
+
+  | | first turn | every turn after |
+  |---|---|---|
+  | 100,000-token conversation | ~88 s | **~2 s** |
+  | 10,000-token conversation | ~9 s | **~1.4 s** |
+
+  The follow-up cost is **flat**. It does not grow as the conversation does,
+  because it depends on how much you added, not on how much is already there.
+  Measured over a 20-turn session growing to 108,000 tokens, every turn after
+  the first landed between 2.0 and 2.3 s. See
+  [Choosing a cache mode](configuration.md#choosing-a-cache-mode) for when to change it.
+
+## Served throughput, end to end over HTTP
+
+On 0.18.0 with the default checkpoint (the conditions of [0.18.0, both
+checkpoints](#0180-both-checkpoints)), the image's own `sweep` mode measures
+**1,821 tok/s at pp8192, 1,740 at pp32768 and 1,675 at pp131072** through the
+full stack of chat template, tokenizer, HTTP and SSE, with the prompt cache
+off. With the cache on, the default, a cold request reads 1,646 and 1,806 at
+8,192 and 32,768; it also stores that request's state for the next turn.
+`bench` over ten prompt shapes measures **59.7 tok/s mean with speculation**
+(about 50 on prose at the low end, about 70 on code at the high end; 2.59
+tokens committed per round; ht43 reads 59.6). On 0.14.1 the same two
+instruments read 1,502 / 1,499 tok/s and 52.5 tok/s. Acceptance depends on
+how predictable the text is, so quote the mean with the prompt set named,
+never a single shape.
+
+That run also re-checks the identity property on live traffic: **every drafter
+produced byte-identical output on every case**, on both checkpoints.
+
+Reproduce the numbers with the benchmarks baked into the image:
+
+```bash
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.1 bench serial,mtp 256 low 3
+podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.1 sweep -p 8192,32768 -n 128
+```
+
+Run the sweep with the prompt cache off, as above. It repeats one prompt per
+size, so with the cache on the repeats are cache hits and the printed mean
+is hundreds of times the real prefill rate.
+
+---
