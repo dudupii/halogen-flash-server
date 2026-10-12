@@ -1,5 +1,11 @@
 # Measured
 
+**Every number here is the published image at its defaults on an AMD Ryzen
+AI Max+ 395 (128 GB) at about 85 W of sustained package power**, one
+checkpoint a machine, with the conditions each table names. Decode depends
+on how predictable the text is: quote the row for the kind of text you
+run, never one number for all of them.
+
 ## 0.18.0, both checkpoints
 
 The published 0.18.0 image at its defaults (the prompt cache on unless a row
@@ -57,10 +63,17 @@ rate.
 
 ## Earlier releases, on the reference machine
 
-**Conditions, because they change the numbers:** AMD Ryzen AI Max+ 395
-(Radeon 8060S, gfx1151), 128 GB unified memory, ROCm 7.14.0, and **about 85 W
-of sustained package power**, sampled from sysfs during a 32,768-token prefill
-alongside a 2,229 MHz median clock against the part's 2,900 MHz top state.
+> [!NOTE]
+> **Conditions, because they change the numbers:** AMD Ryzen AI Max+ 395
+> (Radeon 8060S, gfx1151), 128 GB unified memory, ROCm 7.14.0, and **about
+> 85 W of sustained package power**, sampled from sysfs during a
+> 32,768-token prefill alongside a 2,229 MHz median clock against the part's
+> 2,900 MHz top state. **Match the power envelope before comparing decode
+> numbers** — it is the condition most easily left out: an independent
+> tester running a 70 W-limited handheld measured 11 to 12 percent under
+> both the serial and the drafted figure below, consistently on both, which
+> is the signature of a lower envelope rather than a disagreement about the
+> engine. Prefill reproduced on that same machine.
 
 **The IOMMU is off on the reference machine, and it is worth 13 to 16 percent
 of prefill.** Prefill is compute-bound, and on this hardware an enabled IOMMU
@@ -76,13 +89,6 @@ The full kernel command line this was measured on is published under
 [The host settings these numbers were measured
 on](troubleshooting.md#the-host-settings-these-numbers-were-measured-on), because numbers you
 cannot reproduce are not much use.
-
-**Match the power envelope before comparing decode numbers.** It is the
-condition most easily left out and it moves these rows: an independent tester
-running a 70 W-limited handheld measured 11 to 12 percent under both the serial
-and the drafted figure below, consistently on both, which is the signature of a
-lower envelope rather than a disagreement about the engine. Prefill reproduced
-on that same machine.
 
 **These rows are w4b's**, 0.14's checkpoint with its quality sidecar (the
 default until 0.15.0), in the image's default configuration of their
