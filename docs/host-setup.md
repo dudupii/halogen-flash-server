@@ -5,7 +5,7 @@ the KV pool is reserved up front; on a 128 GB machine that leaves roughly
 twelve gigabytes free, and very little of it in the large contiguous pieces
 that another big process needs in order to start or to grow. If you must
 share, the levers are the pool, `HALOGEN_WEIGHTS_LOCK=1`, and sizing your
-neighbours to the `host memory left` line — never to `free`.
+neighbours to the `host memory left` line, not to `free`.
 
 If you run application containers, a database, or another model on the same
 machine, they compete for what is left. When it runs out, allocations do not
@@ -28,7 +28,7 @@ exit). A restart policy turns that into a loop.
 The deferral has a bound: the compaction counter is host-wide, so on a
 machine that compacts memory without pause it says nothing about this
 engine, and until 0.12.2 the watchdog also restarted its clock on every
-deferred probe — a reporter's engine sat wedged for 30 minutes, main thread
+deferred probe: a reporter's engine sat wedged for 30 minutes, main thread
 at 100% of one core, `/health` timing out, container up (issue #85). The
 watchdog now prints the true silence on every line and, after
 `HALOGEN_ENGINE_WATCHDOG_DEFER_S` (900 s) of deferral with the engine's
@@ -83,8 +83,8 @@ the stall described above. Options, in the order worth trying:
    holds this much of one.
 2. **Lower `HALOGEN_KV_POOL_POSITIONS`.** Fewer conversations stay resident
    at once; each one's speed and its answers are unchanged.
-3. **`HALOGEN_WEIGHTS_LOCK=1`** — for a host that is already short (below).
-4. **`HALOGEN_FLASH_PIN_TRUNK=0`** — w4b only, a last resort (below).
+3. **`HALOGEN_WEIGHTS_LOCK=1`**, for a host that is already short (below).
+4. **`HALOGEN_FLASH_PIN_TRUNK=0`**, w4b only, a last resort (below).
 
 Compacting memory afterwards does not help, because the memory this server
 holds cannot be moved. If you need to reclaim it, stop the server.

@@ -69,7 +69,7 @@ rate.
 > 85 W of sustained package power**, sampled from sysfs during a
 > 32,768-token prefill alongside a 2,229 MHz median clock against the part's
 > 2,900 MHz top state. **Match the power envelope before comparing decode
-> numbers** — it is the condition most easily left out: an independent
+> numbers**; it is the condition most easily left out: an independent
 > tester running a 70 W-limited handheld measured 11 to 12 percent under
 > both the serial and the drafted figure below, consistently on both, which
 > is the signature of a lower envelope rather than a disagreement about the

@@ -132,7 +132,7 @@ this server unchanged. Beside them sit halogen's own counters.
 | `halogen:kv_pool_waiting_for_room` | requests waiting for pool room |
 | `halogen:cache_hits_total`, `halogen:cache_misses_total`, `halogen:cache_prompt_tokens_saved_total`, `halogen:cache_entries`, `halogen:cache_bytes`, `halogen:cache_evicted_total` | the prompt cache's main numbers |
 | `halogen:cache_disk_enabled`, `halogen:cache_disk_bytes`, `halogen:cache_disk_budget_bytes`, `halogen:cache_disk_hits_total` | the cache's disk tier |
-| `halogen:cache_last_message_rewrites_total` | requests that resumed inside the previous request's last message — a client that changes or drops part of it each turn — and continued in that conversation's cache |
+| `halogen:cache_last_message_rewrites_total` | requests that resumed inside the previous request's last message (a client that changes or drops part of it each turn) and continued in that conversation's cache |
 | `halogen:cache_disk_cut_back_total` | times the disk tier trimmed a conversation's files back to where its next request resumed, instead of writing a second copy |
 | `halogen:engine_up`, `halogen:busy_for_seconds`, `halogen:build_info` | liveness: the probe `/health` reports; how long the oldest request has run; the build |
 | `halogen:cache_stats_age_seconds` | how old the cache numbers are |

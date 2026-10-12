@@ -105,7 +105,7 @@ podman run --rm -p 8731:8731 \
 ```
 
 One condition first: **set the BIOS carve-out (UMA frame buffer) to its
-minimum**, not Auto — this engine wants host RAM, not dedicated VRAM. The
+minimum**, not Auto: this engine wants host RAM, not dedicated VRAM. The
 [Quickstart](docs/getting-started.md) covers that, Docker, the compose
 file, and upgrading from an older checkpoint.
 

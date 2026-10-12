@@ -21,7 +21,7 @@ means you have the whole answer, `"length"` means you ran out of budget.
 
 | you want | send | what it does |
 |---|---|---|
-| a total budget | `max_completion_tokens` | also accepted: `max_output_tokens`, `max_tokens` — one field, three names, same meaning. Send one, or several that agree; two different values is a 400, never a guess. Default **8192**; cap **65536** (`HALOGEN_MAX_TOKENS_CAP`). Above the cap you get a 400 rather than a silent truncation: ask for what you need and the server tells you if it is too much. |
+| a total budget | `max_completion_tokens` | also accepted: `max_output_tokens`, `max_tokens`: one field, three names, same meaning. Send one, or several that agree; two different values is a 400, never a guess. Default **8192**; cap **65536** (`HALOGEN_MAX_TOKENS_CAP`). Above the cap you get a 400 rather than a silent truncation: ask for what you need and the server tells you if it is too much. |
 | less thinking | `"reasoning_effort": "low"` | accepted: `minimal` `low` `medium` `high` `xhigh` `max`; the model's own default is `xhigh`. Hard reasoning problems can genuinely exceed 8192 tokens: pass a larger budget, or think less. |
 | no thinking | `"reasoning_effort": "none"` | the same as `chat_template_kwargs: {"enable_thinking": false}`, and `reasoning: {"effort": "none"}` on `/v1/responses`. |
 | a bound on the think block | `"max_thinking_tokens": N` | if the model has not closed the block after N generated tokens, the server closes it (see *When the server closes the block*). Server default: `HALOGEN_MAX_THINKING_TOKENS`; the request wins. The total budget still covers thinking and answer. |
@@ -88,8 +88,8 @@ mechanism off); `/health` reports it as `thinking_answer_room`.
 
 ## When the server closes the block, it says so
 
-When the server closes the think block — at your `max_thinking_tokens`, at
-the answer room, or at the end-of-turn guard below — it writes Qwen's
+When the server closes the think block, at your `max_thinking_tokens`, at
+the answer room or at the end-of-turn guard below, it writes Qwen's
 closing sentence and then `<|im_end|>`; the answer follows in the same stream,
 on the same state, with no second request. `HALOGEN_THINKING_BUDGET_MESSAGE`,
 like llama-server's `--reasoning-budget-message`, replaces that sentence
@@ -118,13 +118,12 @@ answer" is this close, and the fields name it.
 ## The end-of-turn guard
 
 The tokenizer has one token for `<|im_end|>`, so a model that writes or reads a
-ChatML chat template in its reasoning writes the real end-of-turn token —
-and the reply would end right there: `finish_reason: "stop"`, no content,
+ChatML chat template in its reasoning writes the real end-of-turn token, and the reply would end right there: `finish_reason: "stop"`, no content,
 no tool call (on 15-25% of one agent's turns, issue #84). The guard keeps
 generation going instead:
 
 - inside the thinking block, `<|im_end|>` is kept as text and generation goes
-  on — at most 16 of them per reply; the 17th closes the block with the
+  on, at most 16 of them per reply; the 17th closes the block with the
   thinking budget's closing text and the model answers, so a sampled reply
   caught in a loop of markers does not spend its budget there
   (`reasoning_closed_by` then reads `end_of_turn_guard`);

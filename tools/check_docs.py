@@ -58,6 +58,8 @@ def check_file(path, in_docs):
             continue
         if "§" in ln:
             errors.append(f"{rel}:{n}: section cite (§) in public text")
+        if "—" in ln:
+            errors.append(f"{rel}:{n}: em-dash in prose (the rule: none in public text)")
         for target in LINK.findall(ln):
             if target.startswith(("http://", "https://", "mailto:", "#")):
                 continue

@@ -9,7 +9,7 @@ Full list in [`docs/FLAGS.md`](FLAGS.md). The ones that matter:
 | `HALOGEN_BIND` | `127.0.0.1` | Engine bind address. Loopback when engine and API share a container; `0.0.0.0` only for the split topology, where it stays unpublished. |
 | `HALOGEN_CTX` | `262144` | The most one request may use, the model's full native context. It bounds a **request**, not an allocation. |
 | `HALOGEN_KV_POOL_POSITIONS` | `2 x HALOGEN_CTX` | **The memory knob.** Positions resident across all conversations, about 29.5 KiB each. [See below](#context-and-memory-one-kv-pool-several-conversations). |
-| `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. A slot costs about 115 MB of its own state; **it is not the memory knob** — the pool is. |
+| `HALOGEN_KV_SLOTS` | `4` | Conversations generating at once. A slot costs about 115 MB of its own state; **it is not the memory knob**; the pool is. |
 | `HALOGEN_PROMPT_CACHE` | `2` | Session prefix reuse. On by default. `1` for byte-identical repeat answers, `0` for off. [See below](#choosing-a-cache-mode). |
 | `HALOGEN_MATMUL_TUNING_FILE` | **baked into the image** | A tuned GEMM plan, on by default, at no measured quality cost. The published prefill numbers include it. |
 | `HALOGEN_CK_OVERLAY` | **the quality sidecar** | You get quality by default. `…overlay-speed.hgn` trades the calibration for about 2% decode, `none` runs the bare checkpoint. [See above](precision.md#precision-what-you-get-and-how-to-trade-it). |
@@ -39,7 +39,7 @@ It is the only setting that helps short conversations: mode `1` saves nothing
 at all until a conversation passes 32,768 tokens, so ordinary chat gets no
 benefit from it. The default starts working on the second turn, whatever the
 length. The first request on a new prompt costs a little more than with the
-cache off — about 1 to 2% of its prefill at any length (a fixed 0.15 s or so
+cache off: about 1 to 2% of its prefill at any length (a fixed 0.15 s or so
 on the reference machine, mostly the two saves themselves), paid once per new
 prompt, never on a hit. To reproduce a cache-off benchmark figure, set
 `HALOGEN_PROMPT_CACHE=0`: the default's first-request cost is what a
@@ -63,7 +63,7 @@ so saving state is pure overhead.
 > On a 240-question fact-retrieval test the resumed server scored 236
 > against a cold server's 238, and in chat format specifically both scored
 > 100%. And the server already splits long prompts into chunks to fit them in
-> memory — simply changing where it splits moves the output *slightly more*
+> memory. Simply changing where it splits moves the output *slightly more*
 > than resuming from a cache does. Exact reproducibility across configuration
 > changes was never on offer; mode `1` guarantees it across cache state,
 > which is a narrower and more useful promise than it first appears.
@@ -202,7 +202,7 @@ times for about 28 s each instead of once for 105 s.
 | lever | effect |
 |---|---|
 | `HALOGEN_MAX_TOK=16384` | halves the pause for everyone at about 8% slower prefill |
-| `HALOGEN_ADMIT_CHUNK=8192` | makes the pause about 8 s and costs the admitted prompt about 5 s on its first token — and that prompt's answer then depends on the load when it arrived, the one setting here that gives up the identity property |
+| `HALOGEN_ADMIT_CHUNK=8192` | makes the pause about 8 s and costs the admitted prompt about 5 s on its first token; that prompt's answer then depends on the load when it arrived, the one setting here that gives up the identity property |
 
 A short request that arrives during those pieces runs between two of them
 instead of waiting for the whole prompt, and a request from a person goes
@@ -213,7 +213,7 @@ generating still pauses while each piece is read.
 
 **When the pool runs out of room,** the server tries, in order:
 
-1. give up an **idle region** first — a conversation's own span counts as
+1. give up an **idle region** first: a conversation's own span counts as
    free, and its rows move into any span that holds them, overlap or not (the
    copy goes in block-aligned chunks in the safe direction; the log says
    `moved the N rows ... in 12.3 ms`);
@@ -318,7 +318,7 @@ prompt and ask different things resume from it as well.
 | lever | when |
 |---|---|
 | raise `HALOGEN_CACHE_ENTRIES` by one conversation's worth (about 115 MiB of host RAM per entry, and the KV rows an entry covers stay reserved while it exists) for each extra deep conversation | more than four deep conversations at once; a value too small to hold one conversation's worth per slot says so at startup |
-| raise `HALOGEN_CACHE_BRANCHES` (two by default: a conversation plus one side turn) | a **fan-out**: one parent forked into several children living in the same region — at two, the parent's resume point is the one the children's stores replace |
+| raise `HALOGEN_CACHE_BRANCHES` (two by default: a conversation plus one side turn) | a **fan-out**: one parent forked into several children living in the same region; at two, the parent's resume point is the one the children's stores replace |
 
 The server prints the memory budget at startup and warns before the
 allocator refuses.
@@ -362,8 +362,8 @@ memory only.
 >   `HALOGEN_KV_POOL_POSITIONS=262144`, which keeps the copy at the drive's
 >   rate.
 
-Each distinct configuration — engine build, weights file, context, and every
-setting that changes the saved bytes — keeps its own subtree of the
+Each distinct configuration (engine build, weights file, context, and every
+setting that changes the saved bytes) keeps its own subtree of the
 directory, so a different build or setting never restores another's state,
 and the bound above applies to the current subtree only. An upgrade leaves
 the previous build's subtree behind, readable by nothing but that build; the

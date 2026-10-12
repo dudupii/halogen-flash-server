@@ -5,7 +5,7 @@ sidecar adds its own routes beside them.** All bodies are JSON. Errors come
 back OpenAI-style as `{"error": {"message": ..., "type": ...}}` with a real
 HTTP status, and a refusal always says why rather than guessing what you
 meant. `/health` is the authoritative account of what the build you are
-running supports — read it before writing against a feature.
+running supports; read it before writing against a feature.
 
 ## Conventions
 
@@ -84,13 +84,13 @@ route. [Small models on the NPU](npu-small-models.md) and the
 | 400 | a budget above the cap; two budget fields with different values; a schema keyword the mask refuses (the message names it); `logprobs` shapes not implemented; a `previous_response_id` with no history; an image with no vision tower; a prompt at exactly the context |
 | 401 | a key is required and this request did not carry one |
 | 404 | an unknown route or handle |
-| 499 | a non-streaming request whose client hung up — the work was cancelled, not lost |
+| 499 | a non-streaming request whose client hung up; the work was cancelled, not lost |
 | 500 | the server's own failure; the message says what, and `/health` still answers |
 
 ---
 
 *This page is the map; the linked pages carry the detail, the examples, and
 the conditions. If a field here and the running server disagree, the server
-is right and `/health` is the arbiter — and a report to
+is right and `/health` is the arbiter. A report to
 [issues](https://github.com/peonist-ai/halogen-flash-server/issues) would be
 welcome.*

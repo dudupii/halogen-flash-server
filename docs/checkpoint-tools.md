@@ -6,7 +6,7 @@ Each answers one question about a file:
 | mode | the question it answers |
 |---|---|
 | `verify` | is this file what it says it is? |
-| `inspect` | what does it actually carry — precision by family, hashes? |
+| `inspect` | what does it actually carry: precision by family, hashes? |
 | `ppl` | how does it compare to the shipped checkpoint (perplexity, and KL against a reference dump)? |
 | `niah` | does it still find things at depth? |
 

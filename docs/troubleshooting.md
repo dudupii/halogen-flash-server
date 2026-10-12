@@ -15,7 +15,7 @@
 ## If the server will not start: "out of memory"
 
 **The KV pool did not fit on this machine. The knob is the pool, not the
-slots** — `HALOGEN_KV_SLOTS` is the first thing most people try, and it will
+slots**: `HALOGEN_KV_SLOTS` is the first thing most people try, and it will
 not fix this: the slots share one pool and each costs only about 115 MB, so
 one slot allocates as much as four.
 
@@ -57,7 +57,7 @@ A start that prints `reserving the KV pool` and then nothing for many
 minutes, with `still reserving` lines whose compaction counts climb and a
 process that `podman stop` cannot end, is **not** the out-of-memory case
 above. The usual cause: memory a previous GPU process's exit did not give
-back. Waiting does not fix it and removing containers does not fix it —
+back. Waiting does not fix it and removing containers does not fix it;
 reboot the host before starting the server again.**
 
 The pool lands in GTT, the driver's own window on system RAM, and a start
@@ -98,7 +98,7 @@ pressure causes while serving, are tracked in issue #85.
 > **A GPU memory fault is a different failure**, and the container ends it in
 > seconds: a `Memory access fault by GPU node-1 ... Page not present` used to
 > be followed by a GPU core dump of the whole process (`GPU coredump: ... Falling back to file-based dump`), which for a process with over 100 GiB
-> mapped is minutes in uninterruptible sleep before the engine can exit — read
+> mapped is minutes in uninterruptible sleep before the engine can exit; read
 > by the watchdog as the memory case above. The container now disables that
 > dump and the process's core file, so the fault line is followed by the
 > engine's exit and the takedown path, and the log holds the fault's own
