@@ -20,6 +20,7 @@ need below. All links are raw markdown, readable without a browser.
 
 ## Clients and requests
 
+- [API reference](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/api.md): every endpoint on the API port and the NPU sidecar, conventions, status codes
 - [Codex and the Responses API](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/codex.md): config.toml, the Responses endpoint, streaming, tools
 - [Claude Code and the Messages API](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/claude-code.md): the Anthropic-compatible endpoint and its settings
 - [From an agent harness](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/agent-harness.md): driving the server from your own agent loop

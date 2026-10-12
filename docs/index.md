@@ -20,6 +20,7 @@ what that leaves for anything else.
 
 **Driving it from a client:**
 
+- [API reference](api.md) — every endpoint, conventions, status codes
 - [Codex and the Responses API](codex.md)
 - [Claude Code and the Anthropic Messages API](claude-code.md)
 - [From an agent harness](agent-harness.md)

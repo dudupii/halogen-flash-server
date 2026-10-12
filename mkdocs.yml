@@ -45,6 +45,7 @@ nav:
       - Quickstart: getting-started.md
       - Give it a machine of its own: host-setup.md
   - Clients and requests:
+      - API reference: api.md
       - Codex and the Responses API: codex.md
       - Claude Code and the Messages API: claude-code.md
       - From an agent harness: agent-harness.md
