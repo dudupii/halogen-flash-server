@@ -10,7 +10,7 @@ Good fits are triage and routing (which queue, which tool, which team), yes/no
 checks, moderation, and asking several questions about one document. The label
 is scored before the model has a chance to reason, so a judgment that needs
 thought is better served by a normal request with thinking on and a
-structured answer (`response_format`, see [Using it](../README.md#using-it)).
+structured answer (`response_format`, see [Using it](index.md#using-it)).
 
 ## The request
 

@@ -29,7 +29,7 @@ Larger sizes of the first three are named the same way (see [Larger sizes](#larg
   - **As root** (`docker run`, or `sudo podman run`): add `-v /sys:/host/sys`. The server then holds the clock itself
     while it runs and gives it back when it stops. Nothing to install.
   - **Rootless podman** (the Quickstart's form): the container cannot change it. Install the unit in
-    [`deploy/host/`](../deploy/host/) once, and it holds the clock at every boot:
+    [`deploy/host/`](https://github.com/peonist-ai/halogen-flash-server/tree/main/deploy/host) once, and it holds the clock at every boot:
 
     ```
     sudo install -m 755 deploy/host/halogen-fabric-clock /usr/local/sbin/
