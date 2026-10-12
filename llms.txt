@@ -1,0 +1,53 @@
+# halogen-flash-server
+
+> halogen is the fastest way to run Qwen3.8-Flash-Next on AMD Strix Halo
+> (gfx1151): a dedicated ROCm/HIP inference engine shipped as a container,
+> with an OpenAI-compatible API built for agents. One GPU, one model family,
+> every kernel written for this exact silicon. At temperature 0, output is
+> byte-identical to serial greedy decode; speculation is a pure speed
+> optimization, verified on every release.
+
+Start with AGENTS.md for the deploy-and-debug playbook, then the page you
+need below. All links are raw markdown, readable without a browser.
+
+## Get started
+
+- [Docs home](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/index.md): map of every page
+- [Quickstart](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/getting-started.md): first run on a Strix Halo box; BIOS carve-out, Podman and Docker, weight download, upgrading
+- [Give it a machine of its own](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/host-setup.md): what the server holds in memory, and the recipes if you must share the box
+- [Troubleshooting](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/troubleshooting.md): will not start, hangs at pool reservation, crawls on long prompts, Fedora/SELinux, the host settings the numbers were measured on
+- [What this release is not](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/limits.md): the deliberate scope lines
+
+## Clients and requests
+
+- [Codex and the Responses API](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/codex.md): config.toml, the Responses endpoint, streaming, tools
+- [Claude Code and the Messages API](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/claude-code.md): the Anthropic-compatible endpoint and its settings
+- [From an agent harness](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/agent-harness.md): driving the server from your own agent loop
+- [Sessions: keep, fork and join](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/sessions.md): prompt-cache session headers
+- [Sampling](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/sampling.md): the supported fields and their defaults
+- [Images](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/images.md): the vision tower, request shapes, screenshot guidance
+- [Token budgets](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/token-budgets.md): why an empty answer means you ran out, thinking controls, max-token aliases
+- [Using it as a classifier](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/classifier.md): short pointer to the classify endpoint
+
+## Configuration and checkpoints
+
+- [Configuration](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/configuration.md): cache modes, KV pool and context, prompt cache on disk, 1M context, attention budget, composable context, API key, request records
+- [Precision](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/precision.md): what you get, and how to trade it
+- [Bring your own GGUF](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/gguf.md): run a llama.cpp GGUF of this model on these kernels, and what that costs and buys
+- [Measuring a checkpoint](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/checkpoint-tools.md): verify, inspect, ppl and niah as modes of the image
+- [Small models on the NPU](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/npu-small-models.md): the NPU sidecar models
+- [NPU host details](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/NPU.md): the AMD NPU (amdxdna) host setup, request shapes, supported models
+
+## Numbers
+
+- [Measured](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/performance.md): prefill and decode for both shipped checkpoints, with conditions; served throughput end to end over HTTP
+- [Quality](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/quality.md): what is measured, and what is not
+
+## Reference
+
+- [Flags](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/FLAGS.md): every HALOGEN_* environment flag, default and effect
+- [QUANT](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/QUANT.md): the shipped checkpoint's precision by tensor family, measured from the files
+- [CLASSIFY](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/docs/CLASSIFY.md): the classify endpoint, complete request shapes
+- [AGENTS.md](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/AGENTS.md): the AI-agent playbook for deploying, driving and debugging the server
+- [CHANGELOG](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/CHANGELOG.md): every release and what changed
+- [README](https://raw.githubusercontent.com/peonist-ai/halogen-flash-server/main/README.md): the landing page with the headline numbers and their conditions
