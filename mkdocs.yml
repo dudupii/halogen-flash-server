@@ -1,0 +1,82 @@
+site_name: halogen-flash-server
+site_description: Run Qwen3.8-Flash-Next on AMD Strix Halo — a dedicated ROCm/HIP inference engine with an OpenAI-compatible API built for agents.
+site_url: https://peonist-ai.github.io/halogen-flash-server/
+repo_url: https://github.com/peonist-ai/halogen-flash-server
+repo_name: peonist-ai/halogen-flash-server
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.share
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Quickstart: getting-started.md
+      - Give it a machine of its own: host-setup.md
+  - Clients and requests:
+      - Codex and the Responses API: codex.md
+      - Claude Code and the Messages API: claude-code.md
+      - From an agent harness: agent-harness.md
+      - "Sessions: keep, fork and join": sessions.md
+      - Sampling: sampling.md
+      - Images: images.md
+      - Token budgets: token-budgets.md
+      - Using it as a classifier: classifier.md
+  - Configuration and checkpoints:
+      - Configuration: configuration.md
+      - Precision: precision.md
+      - Bring your own GGUF: gguf.md
+      - Measuring a checkpoint: checkpoint-tools.md
+      - Small models on the NPU: npu-small-models.md
+      - NPU host details: NPU.md
+  - Numbers:
+      - Measured: performance.md
+      - Quality: quality.md
+  - Help:
+      - Troubleshooting: troubleshooting.md
+      - What this release is not: limits.md
+  - Reference:
+      - Flags: FLAGS.md
+      - Checkpoint precision (QUANT): QUANT.md
+      - Classify endpoint: CLASSIFY.md
+
+validation:
+  links:
+    not_found: warn
+  anchors: warn
+  nav:
+    omitted_files: warn
+
+extra:
+  generator: false
