@@ -69,8 +69,7 @@ The Anthropic Messages API: `system` blocks, `content` blocks, `tools` and
 
 When the NPU container runs, small models answer beside the Flash model:
 `POST /v1/embeddings`, `/v1/rerank`, `/v1/moderations`, `/v1/systemone`
-(decisions), `/v1/images/generations`, `/v1/images/edits`,
-`/v1/images/variations`, `/v1/audio/transcriptions`, and
+(decisions), `/v1/images/generations`, `/v1/audio/transcriptions`, and
 `/v1/chat/completions` for the small generative models; `GET /health` and
 `/v1/models` report them. Each route only accepts the model kinds built
 for it, and a wrong pairing is refused with a message naming the right
