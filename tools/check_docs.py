@@ -9,8 +9,8 @@ Checks, all mechanical, no box needed:
 2. no docs page links outside docs/ by relative path (the hosted site
    cannot follow those; use a full GitHub URL instead);
 3. every docs/*.md page appears in mkdocs.yml's nav and in llms.txt;
-4. no `§` cites in public text (the section numbers are private-repo
-   references a public reader cannot follow);
+4. no `§` cites in public text (internal engineering-note references a
+   public reader cannot follow);
 5. the README stays a landing page, not the whole manual (size cap).
 
 Run from the repo root: python3 tools/check_docs.py
@@ -58,6 +58,8 @@ def check_file(path, in_docs):
             continue
         if "§" in ln:
             errors.append(f"{rel}:{n}: section cite (§) in public text")
+        if "—" in ln:
+            errors.append(f"{rel}:{n}: em-dash in prose (the rule: none in public text)")
         for target in LINK.findall(ln):
             if target.startswith(("http://", "https://", "mailto:", "#")):
                 continue

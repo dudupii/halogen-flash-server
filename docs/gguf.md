@@ -1,6 +1,6 @@
 # Bring your own GGUF
 
-Since 0.7.0 `HALOGEN_CHECKPOINT` may name a llama.cpp GGUF of this model
+`HALOGEN_CHECKPOINT` may name a llama.cpp GGUF of this model
 instead of the engine's own checkpoint. The engine reads the file itself: at
 startup it repacks every tensor but the lookup table into the layouts its
 kernels read, **losslessly** (the file's own quantized values, moved, not

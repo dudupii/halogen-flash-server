@@ -1,13 +1,21 @@
 # Measuring a checkpoint
 
-Since 0.13.0 the image carries the tools this project measures its own
-checkpoints with, as modes of the same container: `verify`, `inspect`,
-`ppl` and `niah`. They take the same mounts as the server and no port,
-they load nothing you do not already have, and every number they print
-is on the same scale as the numbers in this README, because it is the
-same engine computing it. They exist so that a quant you made, a GGUF you
-pulled, or a fine-tune you converted can be checked and compared without
-our fixtures, a torch install, or our word for it.
+**The image carries four checkpoint tools as modes of the same container.**
+Each answers one question about a file:
+
+| mode | the question it answers |
+|---|---|
+| `verify` | is this file what it says it is? |
+| `inspect` | what does it actually carry: precision by family, hashes? |
+| `ppl` | how does it compare to the shipped checkpoint (perplexity, and KL against a reference dump)? |
+| `niah` | does it still find things at depth? |
+
+They take the same mounts as the server and no port, they load nothing you
+do not already have, and every number they print is on the same scale as
+the numbers in this documentation, because it is the same engine computing
+it. They exist so that a quant you made, a GGUF you pulled, or a fine-tune
+you converted can be checked and compared without our fixtures, a torch
+install, or our word for it.
 
 The run line is the server's without `-p`, plus the mode and its
 arguments. Every example below abbreviates it as `podman run … halogen`:
@@ -215,3 +223,11 @@ the per-position file to the assistant and ask it what the worst positions
 have in common.
 
 ---
+
+---
+
+## History
+
+| shipped | what arrived |
+|---|---|
+| 0.13.0 | the four modes (`verify`, `inspect`, `ppl`, `niah`) in the image |

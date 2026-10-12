@@ -1,5 +1,9 @@
 # Sampling
 
+**Greedy is the default and the guarantee: temperature absent or 0 is
+byte-identical serial decode.** Above 0 the request samples, and speculation
+stays on.
+
 `temperature`, `top_p`, `top_k`, `min_p`, `seed`,
 `presence_penalty`, `frequency_penalty`, `repetition_penalty`, `logit_bias`
 and `logprobs` are supported. `temperature` absent or 0 is greedy decode. Above 0, the request
