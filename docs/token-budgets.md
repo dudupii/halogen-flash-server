@@ -170,10 +170,16 @@ entrypoint's fallback to it needs no mount at all.
 
 ---
 
-*Shipped in:* budget and effort fields from the first release;
-`max_thinking_tokens` 0.8.1; answer room and harness field names 0.11.0;
-`reasoning_closed_*` and the template check 0.12.2; end-of-turn guard
-0.13.4 (kept-marker limits 0.14.2); `HALOGEN_THINKING_BUDGET_MESSAGE`,
-`max` effort, and the thinking-off count fix 0.15.1. Before 0.11.0 a budget
-that ran out mid-thought removed the answer entirely; the answer room is
-why that shape no longer happens unless you turn it off.
+## History
+
+| shipped | what arrived |
+|---|---|
+| 0.8.1 | `max_thinking_tokens` |
+| 0.11.0 | the answer room; harness field-name aliases |
+| 0.12.2 | `reasoning_closed_at` / `reasoning_closed_by`; the startup template check |
+| 0.13.4 | the end-of-turn guard |
+| 0.14.2 | the kept-marker limit (16 in the thinking block) |
+| 0.15.1 | `HALOGEN_THINKING_BUDGET_MESSAGE`; the `max` effort; thinking-off requests count no reasoning tokens |
+
+Before 0.11.0 a budget that ran out mid-thought removed the answer entirely;
+the answer room is why that shape no longer happens unless you turn it off.

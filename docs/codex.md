@@ -119,36 +119,27 @@ per-request line, copied.
 
 **`GET /metrics` answers in Prometheus format** with llama-server's metric
 names, so a dashboard built for llama.cpp (or llama-swap's upstream) reads
-this server unchanged: `llamacpp:prompt_tokens_total`,
-`llamacpp:tokens_predicted_total` and their `_seconds_total` counters (the
-engine's own per-request numbers, summed; `prompt_n` is the processed
-count), the `prompt_tokens_seconds` / `predicted_tokens_seconds` gauges
-over the requests since the last scrape, `requests_processing`,
-`requests_deferred`, `kv_cache_tokens` and `kv_cache_usage_ratio` (the
-engine's own occupancy: the positions its pool holds in every region, busy
-and held, over the pool, as of the last completed request). Beside them:
-`halogen:requests_total`, `halogen:prompt_tokens_cached_total`,
-`halogen:draft_tokens_total`, `halogen:draft_tokens_accepted_total`,
-`halogen:structured_requests_total`, `halogen:kv_pool_positions`,
-`halogen:kv_pool_reserved_tokens` (the front end's reservation),
-`halogen:engine_up` (the probe `/health` reports),
-`halogen:busy_for_seconds` (how long the oldest request has run) and
-`halogen:build_info`. The prompt cache's numbers ride too:
-`halogen:cache_hits_total`, `halogen:cache_misses_total`,
-`halogen:cache_prompt_tokens_saved_total`, `halogen:cache_entries`,
-`halogen:cache_bytes`, `halogen:cache_evicted_total`, the disk tier's
-`halogen:cache_disk_enabled`, `halogen:cache_disk_bytes`,
-`halogen:cache_disk_budget_bytes` and `halogen:cache_disk_hits_total`,
-`halogen:kv_pool_waiting_for_room`,
-`halogen:cache_last_message_rewrites_total` (requests that resumed inside
-the previous request's last message — a client that changes or drops part
-of it each turn — and continued in that conversation's cache) and
-`halogen:cache_disk_cut_back_total` (times the disk tier trimmed a
-conversation's files back to where its next request resumed instead of
-writing a second copy). A scrape never stalls on a busy engine: the cache
-numbers are the engine's last report, refreshed in the background, and
-`halogen:cache_stats_age_seconds` says how old it is. `GET /cache` keeps
-the full report. Always on, no flag.
+this server unchanged. Beside them sit halogen's own counters.
+
+| metric | what it is |
+|---|---|
+| `llamacpp:prompt_tokens_total`, `llamacpp:tokens_predicted_total`, and their `_seconds_total` counters | the engine's own per-request numbers, summed (`prompt_n` is the processed count) |
+| `llamacpp:prompt_tokens_seconds`, `llamacpp:predicted_tokens_seconds` | rates over the requests since the last scrape |
+| `llamacpp:requests_processing`, `llamacpp:requests_deferred` | queue state |
+| `llamacpp:kv_cache_tokens`, `llamacpp:kv_cache_usage_ratio` | the engine's own occupancy: the positions its pool holds in every region, busy and held, over the pool, as of the last completed request |
+| `halogen:requests_total`, `halogen:prompt_tokens_cached_total`, `halogen:draft_tokens_total`, `halogen:draft_tokens_accepted_total`, `halogen:structured_requests_total` | halogen's own request counters |
+| `halogen:kv_pool_positions`, `halogen:kv_pool_reserved_tokens` | pool positions; the front end's reservation |
+| `halogen:kv_pool_waiting_for_room` | requests waiting for pool room |
+| `halogen:cache_hits_total`, `halogen:cache_misses_total`, `halogen:cache_prompt_tokens_saved_total`, `halogen:cache_entries`, `halogen:cache_bytes`, `halogen:cache_evicted_total` | the prompt cache's main numbers |
+| `halogen:cache_disk_enabled`, `halogen:cache_disk_bytes`, `halogen:cache_disk_budget_bytes`, `halogen:cache_disk_hits_total` | the cache's disk tier |
+| `halogen:cache_last_message_rewrites_total` | requests that resumed inside the previous request's last message — a client that changes or drops part of it each turn — and continued in that conversation's cache |
+| `halogen:cache_disk_cut_back_total` | times the disk tier trimmed a conversation's files back to where its next request resumed, instead of writing a second copy |
+| `halogen:engine_up`, `halogen:busy_for_seconds`, `halogen:build_info` | liveness: the probe `/health` reports; how long the oldest request has run; the build |
+| `halogen:cache_stats_age_seconds` | how old the cache numbers are |
+
+A scrape never stalls on a busy engine: the cache numbers are the engine's
+last report, refreshed in the background, and `cache_stats_age_seconds`
+says how old it is. `GET /cache` keeps the full report. Always on, no flag.
 
 **The per-request log line** carries the cached share of its prompt, the
 prefill rate over the tokens actually processed, and the pool's occupancy
@@ -197,9 +188,16 @@ Responses routes have no such field. It never changes the reply.
 separately against the official `openai` Python SDK, which parses every
 event into its own typed models.
 
-*Shipped in:* Responses route and reasoning items 0.7.0 (with the
-`timings` object); structured output and `/metrics` 0.8.0; log-line cache
-and pool fields and the occupancy rework 0.11.5 (rate floor 0.11.9); image
-tool outputs 0.14.2; the extra cache metrics 0.17.5 (with prompt progress);
-the `previous_response_id` refusal 0.18.1; the unconstrained tool-call-or-answer
-preamble under a schema 0.16.3; the two cache-composition counters 0.18.0.
+## History
+
+| shipped | what arrived |
+|---|---|
+| 0.7.0 | the Responses route, reasoning items, the `timings` object |
+| 0.8.0 | structured output; `/metrics` |
+| 0.11.5 | cache and pool fields on the log line; the occupancy rework |
+| 0.11.9 | the prefill-rate floor (2,048 tokens) |
+| 0.14.2 | images in tool outputs |
+| 0.16.3 | the unconstrained tool-call-or-answer preamble under a schema |
+| 0.17.5 | the cache metrics; prompt progress |
+| 0.18.0 | the two cache-composition counters |
+| 0.18.1 | the `previous_response_id` refusal |
