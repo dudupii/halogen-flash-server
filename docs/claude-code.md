@@ -1,6 +1,6 @@
 # Claude Code and the Anthropic Messages API
 
-Since 0.15.1 the server also speaks the **Anthropic Messages API** at
+The server also speaks the **Anthropic Messages API** at
 `POST /v1/messages`, with `POST /v1/messages/count_tokens` beside it, so
 Claude Code and the `anthropic` SDKs can use it directly:
 
@@ -48,3 +48,11 @@ Verified against Claude Code running tool round trips end to end, and
 separately against the official `anthropic` Python SDK.
 
 ---
+
+---
+
+## History
+
+| shipped | what arrived |
+|---|---|
+| 0.15.1 | the Messages API and `count_tokens` |
