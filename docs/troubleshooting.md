@@ -10,6 +10,7 @@
 | `Memory access fault by GPU node-1 ... Page not present` | [hangs at reserving the KV pool](#if-the-server-hangs-at-reserving-the-kv-pool), last part |
 | starts fine, crawls on long prompts, disk busy | [starts but crawls](#if-the-server-starts-but-crawls-on-long-prompts) |
 | `Memory critical error by agent node-0` on Fedora | [Fedora and SELinux](#if-the-load-fails-on-fedora-with-memory-critical-error) |
+| `HSA_STATUS_ERROR_INVALID_DISPATCH_PARAMETERS` on a short prompt or an image | [old GPU firmware](#if-the-server-stops-on-a-short-prompt-or-an-image-invalid_dispatch_parameters) |
 | slow everywhere, no error | [the host settings measured on](#the-host-settings-these-numbers-were-measured-on) |
 
 ## If the server will not start: "out of memory"
@@ -188,6 +189,35 @@ leave `--ipc=host` out, turn the boolean on instead:
 ```
 sudo setsebool -P container_use_devices true
 ```
+
+## If the server stops on a short prompt or an image: "INVALID_DISPATCH_PARAMETERS"
+
+**This is GPU firmware from before 2026. Since 0.18.2 the server checks the
+firmware at startup and works around it by itself; current `linux-firmware`
+is the lasting fix.** It shows as a server that stops on a prompt of a few
+hundred tokens, or on its first image, with
+
+```
+Queue error: HSA_STATUS_ERROR_INVALID_DISPATCH_PARAMETERS
+...
+too many resources requested for launch
+```
+
+Debian's 20250410 `firmware-amd-graphics` package and SteamOS ship such
+firmware. On it the server prints this line at startup and keeps working:
+
+```
+halogen: NOTE this GPU's firmware (MEC 0x1d) predates the 2026 linux-firmware releases ...
+```
+
+GPU firmware from 2026 lifts it (MEC 0x24 fixed #128). Check the version with
+
+```
+cat /sys/class/drm/card*/device/fw_version/mec_fw_version
+```
+
+On 0.18.1 and earlier, set `-e HALOGEN_QSA_FORCE_SEL=1`. It is safe at any
+prompt length and costs about nothing.
 
 ## The host settings these numbers were measured on
 

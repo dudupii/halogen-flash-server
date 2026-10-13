@@ -206,7 +206,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_POOL_POSITIONS=262144 \
   -e HALOGEN_KV_SLOTS=2 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.2
 ```
 
 **The smallest footprint at the full context.** The prefill arena halves.
@@ -222,7 +222,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.2
 ```
 
 **If 131k of context is enough.** The pool cannot be smaller than one
@@ -238,7 +238,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_KV_SLOTS=2 \
   -e HALOGEN_MAX_TOK=16384 \
   -v ~/halogen-models:/models:ro \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.2
 ```
 
 **Beside other GPU servers, count the hardware queues.** Another project

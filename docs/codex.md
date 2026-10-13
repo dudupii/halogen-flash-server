@@ -84,6 +84,27 @@ What the mask does with each keyword:
 
 `/health` lists the feature under `structured_output`.
 
+**Strict tools** (since 0.18.2; #147). A tool declared `strict: true` is held
+to its schema the same way: `function.strict` on `/v1/chat/completions`,
+`strict` on a `/v1/responses` tool and on a `/v1/messages` tool beside
+`input_schema`. When any tool on a request is strict, a tool call names one of
+the request's tools, and a strict tool's arguments match its parameter schema:
+the enforced keywords above, every required parameter, and no parameter the
+schema does not declare (`additionalProperties` absent counts as `false`, as
+strict mode means). Parameters may come in any order. A tool without `strict`
+is called as before, and a turn that makes no call is unchanged.
+`parallel_tool_calls: false` (`disable_parallel_tool_use` on `/v1/messages`)
+then allows one call. A call the model writes inside its reasoning block is not
+held to a schema. A string argument cannot contain the line `</parameter>` (the
+call format's own closing tag). `pattern` and `format` are accepted and not
+enforced in a tool's schema. A strict tool whose schema uses a keyword refused
+above, allows extra parameters at the top, or has more than 32 parameters, and
+every strict tool on a request with images, `logprobs` or more than 128 tools,
+is called as it would be without `strict`. The request's log line names it and
+`/metrics` counts it (`halogen:strict_tools_unenforced_total`). `/health` lists
+the rules under `structured_output.strict_tools`. `HALOGEN_STRICT_TOOLS=0`
+accepts `strict` without enforcing it.
+
 > [!NOTE]
 > **Thinking and tools under a schema.** The reasoning block is not
 > constrained: with thinking on the model thinks freely and the JSON starts
@@ -95,10 +116,9 @@ What the mask does with each keyword:
 > text written before it is dropped, and a reply that would end first
 > starts the JSON instead. That preamble may run to half of what
 > `max_tokens` leaves after thinking, at most 1024 tokens; past that the
-> JSON starts and a tool call is no longer offered. A sampled request that
-> would answer in plain text usually runs that text to the limit before the
-> JSON starts, so with tools and a temperature above 0 expect a slower
-> reply where the greedy one would answer at once. This applies to schemas
+> JSON starts and a tool call is no longer offered. Since 0.18.2 a sampled
+> request that would answer in plain text starts the JSON about as promptly
+> as the greedy one does. This applies to schemas
 > whose root is an object; `HALOGEN_SCHEMA_ESCAPE=off` binds the schema
 > from the first token again. Whitespace between tokens is allowed, so a
 > pretty-printed reply is fine, but at most two whitespace-only tokens in a

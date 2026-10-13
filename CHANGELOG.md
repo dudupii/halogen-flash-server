@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.18.2
+
+Strict tool schemas. Decisions on the NPU that take a longer text and can reuse
+what they already read. A server that works around old GPU firmware by itself.
+Six smaller fixes. The Flash checkpoints are unchanged.
+At temperature 0 the output is still byte-identical to serial greedy decode.
+For the reports: issues #147 ([@superbarne](https://github.com/superbarne)),
+#160 ([@Philosjay](https://github.com/Philosjay)),
+#162 ([@cmcmaster1](https://github.com/cmcmaster1)),
+#166 ([@CandidNull](https://github.com/CandidNull)),
+#167 ([@tkajdro](https://github.com/tkajdro)), and the earlier #6 and #128.
+
+### Added
+
+- **Strict tool schemas** (#147). A tool declared `strict: true`
+  (`function.strict` on `/v1/chat/completions`, `strict` on a
+  `/v1/responses` or `/v1/messages` tool) gets a call that names one of the
+  request's tools and arguments that match its parameter schema. `enum` and
+  `const` values, each parameter's type, every required parameter, and no
+  parameter the schema does not declare, at any temperature. Parameters may
+  come in any order. `parallel_tool_calls: false`
+  (`disable_parallel_tool_use` on `/v1/messages`) then allows one call. A
+  request with no strict tool is unchanged. `HALOGEN_STRICT_TOOLS=0` accepts
+  `strict` without enforcing it.
+
+- **Decisions on the NPU take texts up to 8,192 tokens** on `decider-0.8b`
+  and `decider-4b`, where before they took 4,096 (#162). A text of about
+  1,000 to 4,000 tokens also answers faster now, with the same answers.
+
+- **Several questions about one text, on the NPU**, opt-in (#162).
+  `HALOGEN_NPU_DEC_RESUME=1` reads a text once and prefills only what follows
+  for each further question of it. `=2` lets a later request reuse what an
+  earlier one read, when its text only adds to it. The answers are the same
+  as without it. Off by default. See the NPU page.
+
+### Fixed
+
+- **A host with GPU firmware from before 2026 no longer stops on prompts of
+  about 70 to 2,000 tokens or on images** (#166, #128, #6). The server reads
+  the firmware version at startup and on such a host runs as with
+  `HALOGEN_QSA_FORCE_SEL=1`, which it says in one line. `HALOGEN_QSA_FORCE_SEL=0`
+  keeps the previous behaviour. Current linux-firmware is still the lasting
+  fix.
+
+- **An image or a transcription that does not fit beside the other NPU models
+  no longer answers 502** (#167). The server closes the other models' idle
+  parts and tries again. A request that still cannot fit answers 503 and says
+  so, and the server keeps running.
+
+- **A sampled request with a schema and tools now starts its JSON as promptly
+  as a greedy one** when the model would rather answer in plain text. Since
+  0.18.1 such a reply ran its plain text to the limit first.
+
+- **A `response_format` schema with an open object, or an array without
+  `items`, no longer stalls the server** for about a minute the first time it
+  is sent. An example is `{"type": "object", "properties": {"x": {"type":
+  "string"}}}`, with no `additionalProperties`. Every release since 0.8.0 had
+  it. A schema whose `anyOf` refers to itself with no object or array between
+  is now a 400 that says so.
+
+- **Chat-template markup written inside a message is read as text.** A
+  `<|im_end|>` or `<|im_start|>` inside a message, a tool result or a tool
+  description now reaches the model as the characters that were typed, and
+  not as one of the template's own markers. Assistant history keeps the
+  markers the model itself wrote, so a client that echoes back a previous
+  reply still matches. `HALOGEN_CLIENT_MARKERS=special` gives the behaviour
+  before this change.
+
+- **The startup line about the host memory left no longer reads 0.0 GiB** with
+  a GGUF checkpoint and `HALOGEN_WEIGHTS_LOCK=1` (#160). It was the line
+  alone. The memory and the server were fine.
+
 ## 0.18.1
 
 Structured output at any temperature, a way to keep side requests out of the

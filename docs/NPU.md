@@ -55,7 +55,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_NPU_MODELS=decider-0.8b,qwen3-embedding-0.6b,qwen3-reranker-0.6b,qwen3guard-gen-0.6b,qwen3.5-2b \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.1
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.2
 ```
 
 `HALOGEN_DOWNLOAD` fetches the files of the NPU models that `HALOGEN_NPU_MODELS` names, into `/models/npu`, and the
@@ -133,6 +133,11 @@ Each question is one pass. A `choice` answers with `choice`, `probabilities` and
 expected level (`score`), `legend`, `probabilities` keyed by level number from 0, and `confidence`; a `noul` with the
 probability of yes. A choice or score takes 2 to 10 options here, where System One takes up to 255. A bad request
 answers 422.
+
+Several questions about one long text: start the server with `HALOGEN_NPU_DEC_RESUME=1`. A request with several
+questions then reads the text once, and a later request whose text only adds to an earlier one reuses that work. The
+answers are the same as without it. It is off by default. It keeps up to `HALOGEN_NPU_DEC_ENTRIES` texts (6), and each
+kept text holds memory on the host until it is replaced.
 
 ## Embeddings
 
@@ -262,9 +267,10 @@ The 1.7B is the more accurate of the two, and the 0.6B the lighter. One transcri
 queued with the other NPU models' work.
 
 A speech model and the image sizes above 512x512 both need a large share of the NPU's memory, which every NPU model of
-the server shares. With a speech model loaded beside other NPU models, a larger image may answer an error that says
-so. The server keeps running, and 256x256 and 512x512 always fit. `qwen3-asr-1.7b` leaves no room for the larger sizes
-once it has transcribed. Without a speech model, every size fits beside the other NPU models.
+the server shares. When a request does not fit beside what the other NPU models hold, the server closes their idle
+parts and tries again. They reopen at their next request, which then takes a little longer, so alternating large
+images and transcriptions is slower than either alone. A request that still does not fit answers 503 with an error
+that says so, and the server keeps running. 256x256 and 512x512 always fit.
 
 <a id="your-own-model"></a>
 ## Your own model
@@ -314,13 +320,15 @@ changes no result.
 
 ## Limits
 
-- The longest input is 4,096 tokens, a rerank pair or a moderation prompt included (the model's own template counts).
-  A longer one is refused with a 400 that says so.
+- A decision is up to 8,192 tokens, its questions and the model's own template included. Every other input is up to
+  4,096 tokens, a rerank pair or a moderation prompt included (the model's own template counts). A longer one is
+  refused with a 400 that says so.
 - A generation prompt is up to 16,384 tokens (its template counts). The prompt and its answer share 18,432 positions,
   so an answer stops there at the latest.
 - A decision takes 2 to 10 options.
 - A transcription takes a WAV file of up to 20 minutes or 25 MiB.
-- With a speech model loaded beside other NPU models, images above 512x512 may not fit (an error says so).
+- With a speech model loaded beside other NPU models, images above 512x512 and transcriptions take turns at the NPU's
+  memory. Alternating them is slower, and a request that cannot fit answers 503.
 - The NPU models are served in the default mode only, not in the two-container setup (`engine` and `api`).
 
 <a id="host"></a>
