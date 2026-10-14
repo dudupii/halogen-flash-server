@@ -2,17 +2,20 @@
 
 The server can run small models on the Ryzen AI NPU beside the Flash model, behind the same port. Name them in
 `HALOGEN_NPU_MODELS`, and a request picks one by its `model`. Every other request goes to the Flash model, as before.
-Seven kinds of model run there:
+Eight kinds of model run there:
 
 - **Decisions** with `decider-0.8b` (a Qwen3.5-0.8B classifier). Give a text and a question with 2 to 10 options, and
   get a probability for every option from one pass.
-- **Embeddings** with `qwen3-embedding-0.6b`.
+- **Embeddings** with `qwen3-embedding-0.6b`, or with `embeddinggemma-2` (EmbeddingGemma 2) for text, pictures and
+  sound in one space.
 - **Reranking** with `qwen3-reranker-0.6b`. Score documents against a query.
 - **Moderation** with `qwen3guard-gen-0.6b` (Qwen3Guard-Gen-0.6B). Is a prompt, or a reply in its conversation, safe?
+- **A streaming guard** with `qwen3guard-stream-0.6b` (Qwen3Guard-Stream-0.6B). It labels a reply from the Flash model
+  as it is written.
 - **Text generation** with `qwen3.5-2b` (Qwen3.5-2B, thinking off). Summaries and other short jobs, beside the Flash
   model.
 - **Images** with `flux2-klein-4b` (FLUX.2-klein-4B). Icons, diagrams, illustrations and placeholders from 256x256 up
-  to 1024x1024, square or not, on `/v1/images/generations`.
+  to 1024x1024, square or not, on `/v1/images/generations`, and edits of a picture you send on `/v1/images/edits`.
 - **Speech to text** with `qwen3-asr-0.6b` or `qwen3-asr-1.7b` (Qwen3-ASR). Recordings up to 20 minutes, on
   `/v1/audio/transcriptions`.
 
@@ -55,7 +58,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_NPU_MODELS=decider-0.8b,qwen3-embedding-0.6b,qwen3-reranker-0.6b,qwen3guard-gen-0.6b,qwen3.5-2b \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.2
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.3
 ```
 
 `HALOGEN_DOWNLOAD` fetches the files of the NPU models that `HALOGEN_NPU_MODELS` names, into `/models/npu`, and the
@@ -67,7 +70,8 @@ With compose, use `docker-compose.npu.yml`, which runs this same single containe
 starts no NPU engine.
 
 The NPU models' files stay in memory beside the Flash model's, a few GB in all, about 8 GB more with
-`flux2-klein-4b`, about 1.6 GB more with `qwen3-asr-0.6b`, and about 4 GB with `qwen3-asr-1.7b`. The Flash model runs somewhat slower
+`flux2-klein-4b`, about 1.6 GB more with `qwen3-asr-0.6b`, about 4 GB with `qwen3-asr-1.7b`, about 1.1 GB with
+`embeddinggemma-2` and about 0.8 GB with `qwen3guard-stream-0.6b`. The Flash model runs somewhat slower
 while the NPU works, since the two share the memory bus and the chip's power budget.
 
 ## Larger sizes
@@ -135,9 +139,10 @@ probability of yes. A choice or score takes 2 to 10 options here, where System O
 answers 422.
 
 Several questions about one long text: start the server with `HALOGEN_NPU_DEC_RESUME=1`. A request with several
-questions then reads the text once, and a later request whose text only adds to an earlier one reuses that work. The
-answers are the same as without it. It is off by default. It keeps up to `HALOGEN_NPU_DEC_ENTRIES` texts (6), and each
-kept text holds memory on the host until it is replaced.
+questions then reads the text once. With `HALOGEN_NPU_DEC_RESUME=2`, a later request whose text only adds to an earlier
+one also reuses that work (a text that arrives with one question is kept from its second time on). The answers are the
+same as without it. It is off by default. It keeps up to `HALOGEN_NPU_DEC_ENTRIES` texts (6), and each kept text holds
+memory on the host until it is replaced.
 
 ## Embeddings
 
@@ -151,6 +156,36 @@ vectors = [d.embedding for d in r.data]                 # 1024 floats each, unit
 A query carries the task instruction in the model's own form, `Instruct: <task>\nQuery:<query>`. A document carries
 none. `dimensions` (32 to 1024) keeps the first dimensions and normalizes them again. `encoding_format` can be `float`
 or `base64`. Send text, not token ids. With LangChain's `OpenAIEmbeddings`, set `check_embedding_ctx_length=False`.
+
+## Text, pictures and sound in one space
+
+Name `embeddinggemma-2` (EmbeddingGemma 2) in `HALOGEN_NPU_MODELS` and it is fetched and served on `/v1/embeddings`.
+It puts texts, pictures and audio clips in one 768-dimension space, so a text query can find a photo or a voice memo.
+
+```python
+r = client.embeddings.create(
+    model="embeddinggemma-2",
+    input=["a dog catching a frisbee on the beach",
+           {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
+           {"type": "input_audio", "input_audio": {"data": "<base64 of a WAV file>", "format": "wav"}}],
+    extra_body={"prompt_name": "query"})
+vectors = [d.embedding for d in r.data]                 # 768 floats each, unit length
+```
+
+- `prompt_name`: `query` for what you search with, `document` for what is searched. The server writes the model's own
+  prompt in front of each text. Without it, each text is embedded as sent, so you can write the prompt yourself. It
+  applies to texts only.
+- A text is up to 8,192 tokens, the prompt included. A longer one is refused with a 400.
+- A picture is an `image_url` item with the image inline, as a base64 `data:` URL or bare base64. The server fetches no
+  URLs. PNG, JPEG, WebP, GIF and BMP are taken, up to 32 MiB of base64. Every picture is resized the way the model's
+  own processor does it: its shape kept, to about 800x800 pixels' worth (at most 2,520 squares of 16x16 pixels, each
+  side a multiple of 48), larger pictures scaled down and smaller ones up.
+- An audio clip is an `input_audio` item holding a WAV file in base64: PCM (8 to 32-bit) or float, any sample rate,
+  mono or more channels. A clip is up to 30 seconds. A longer one is refused with a 400.
+- One request can mix texts, pictures and clips, up to 64 pictures and clips. Each picture and each clip takes a pass
+  of its own on the NPU.
+- `dimensions` (32 to 768) keeps the first dimensions and normalizes them again. The model was trained for 768, 512,
+  256 and 128. `encoding_format` can be `float` or `base64`.
 
 ## Reranking
 
@@ -186,6 +221,44 @@ does not sort content into OpenAI's categories, so every category reads `false` 
 conversation, send `messages` instead of `input`, in the chat shape. When the last message is the assistant's, its
 reply is judged. Otherwise the last user message is. A request that names OpenAI's own model, or no model, goes to the
 moderation model loaded here.
+
+## Streaming guard
+
+`qwen3guard-stream-0.6b` labels a reply from the Flash model while it is being written, a stretch at a time, and the
+user's message before it: Safe, Unsafe or Controversial, with a probability and a category. Name it in
+`HALOGEN_NPU_MODELS` (it runs on the embedder's device files, which are fetched with it). Then turn it on for a
+request on `/v1/chat/completions`:
+
+```
+curl -sN localhost:8731/v1/chat/completions -H 'Content-Type: application/json' -d '{
+  "messages": [{"role": "user", "content": "How do I pick a lock?"}],
+  "stream": true, "guard": true}'
+```
+
+- `"guard": true`, the model's name, or an object such as `{"model": "qwen3guard-stream-0.6b", "chunk": 16, "flag": 0.8}`
+  turns it on. The header `X-Halogen-Guard: watch` does the same for a client that cannot add a field. A request with
+  neither is served exactly as before.
+- It watches. It never stops, holds or changes the reply: the reply's own chunks are the same as without it.
+- Streamed, its verdicts are extra chunks with no `choices` and a `halogen_guard` object. `event` is `user` (the user's
+  last message: `risk`, `prob`, `category`), `chunk` (a stretch of the reply: its `tokens`, `risk`, `prob`, `unsafe`,
+  `category` and `flagged`, sent when the label is not Safe or changes), or `end`, a summary just before `[DONE]`
+  (`peak_unsafe`, `flagged_chunks`, `first_flag_token`). Not streamed, the response carries `halogen_guard` with the
+  `events` and the `summary`, made once the reply is finished.
+- `chunk` is how many tokens of the reply each verdict covers, 4 to 128 (16 by default). `flag` is the Unsafe
+  probability at which a stretch is marked `flagged` (`HALOGEN_GUARD_FLAG`, 0.8 by default).
+- The categories for a reply are Violent, Sexual Content, Self-Harm, Political, PII, Copyright, Illegal Acts and
+  Unethical. The user's message can also be Jailbreak.
+- It reads the reply's text, not its reasoning or tool calls, and the user's last message (up to 1,024 tokens: its
+  start and end when it is longer). It watches the first 2,048 tokens of the two together, then says it has stopped.
+- Up to `HALOGEN_GUARD_STREAMS` replies (4) are watched at once. One more is served without the guard, and its stream
+  says so. Text the guard has not reached yet waits, up to `HALOGEN_GUARD_LAG` characters (4,096). Past that the
+  oldest is skipped and a `skipped` event says how much. The end of a streamed reply waits up to
+  `HALOGEN_GUARD_FINAL_S` seconds (3) for the last verdicts.
+- `/v1/chat/completions` only for now, not `/v1/responses` or `/v1/messages`. A `guard` field this server cannot honour
+  (another mode, a model that is not loaded or is not a streaming guard, a `chunk` out of range) is refused with a 400
+  before the reply starts.
+- It is not a moderation model: `/v1/moderations` and `/classify` refuse it with a 400. Use `qwen3guard-gen-0.6b` to
+  judge a finished prompt or reply.
 
 ## Classification
 
@@ -243,6 +316,26 @@ queued with the other NPU models' work.
 A 512x512 image takes about 3 seconds and a 1024x1024 image about 10. A 1024x1024 image uses about 0.7 GB of working
 memory while it draws.
 
+## Image edits
+
+With `flux2-klein-4b` loaded, `/v1/images/edits` changes a picture you send as you describe, and `/v1/images/variations`
+draws a new take on one. Both use OpenAI's multipart shape:
+
+```
+curl -s localhost:8731/v1/images/edits -F model=flux2-klein-4b -F image=@photo.png \
+  -F prompt="turn it into a pencil sketch" -F seed=7
+```
+
+- `image`: one picture, PNG, JPEG, WebP, GIF or BMP, up to 25 MiB. It is cropped to a square at its centre and scaled
+  to 512x512. Transparent parts become white.
+- `prompt`: the change, in words. An edit needs one. A variation takes none: it is the picture under an empty
+  instruction, and each `seed` gives another one.
+- `mask` is refused. The model edits by instruction, so describe the part to change in the prompt.
+- `size`: `512x512` or `auto`. Every edit comes out at 512x512.
+- `n` (one to four), `response_format` (`b64_json` or `url`), `output_format` (`png`) and `seed` work as they do for
+  generations. A `model` that is not one of the server's own (OpenAI's `gpt-image-1`, say) reaches the loaded image
+  model.
+
 ## Speech to text
 
 Name `qwen3-asr-0.6b` or `qwen3-asr-1.7b` in `HALOGEN_NPU_MODELS` and it is fetched and served. It transcribes a
@@ -266,11 +359,15 @@ curl -s localhost:8731/v1/audio/transcriptions -F model=qwen3-asr-1.7b -F file=@
 The 1.7B is the more accurate of the two, and the 0.6B the lighter. One transcription runs at a time on the NPU,
 queued with the other NPU models' work.
 
-A speech model and the image sizes above 512x512 both need a large share of the NPU's memory, which every NPU model of
-the server shares. When a request does not fit beside what the other NPU models hold, the server closes their idle
-parts and tries again. They reopen at their next request, which then takes a little longer, so alternating large
-images and transcriptions is slower than either alone. A request that still does not fit answers 503 with an error
-that says so, and the server keeps running. 256x256 and 512x512 always fit.
+A speech model, the image sizes above 512x512, `embeddinggemma-2`, and `wemm-embedding-4b`'s pictures each need a
+large share of the NPU's memory, which every NPU model of the server shares. When a request does not fit beside what the
+other NPU models hold, the server closes their idle parts and tries again. They reopen at their next request, which then
+takes a little longer, so alternating these models is slower than using one at a time. A request that still does not fit
+answers 503 with an error that says so, and the server keeps running. 256x256 and 512x512 images always fit.
+
+While the models take turns, the kernel log (`dmesg`) can show `amdxdna` error lines such as
+`Failed to alloc dev bo memory, ret -28`. They mean the driver turned down a first try. The server recovers by itself,
+and the answers are unaffected.
 
 <a id="your-own-model"></a>
 ## Your own model
@@ -320,15 +417,17 @@ changes no result.
 
 ## Limits
 
-- A decision is up to 8,192 tokens, its questions and the model's own template included. Every other input is up to
-  4,096 tokens, a rerank pair or a moderation prompt included (the model's own template counts). A longer one is
-  refused with a 400 that says so.
+- A decision is up to 8,192 tokens, its questions and the model's own template included, and so is an
+  `embeddinggemma-2` text, its prompt included. Every other input is up to 4,096 tokens, a rerank pair or a moderation
+  prompt included (the model's own template counts). A longer one is refused with a 400 that says so.
+- An `embeddinggemma-2` audio clip is up to 30 seconds. An image edit takes one picture and comes out at 512x512.
+- The streaming guard watches the first 2,048 tokens of the user's last message and the reply.
 - A generation prompt is up to 16,384 tokens (its template counts). The prompt and its answer share 18,432 positions,
   so an answer stops there at the latest.
 - A decision takes 2 to 10 options.
 - A transcription takes a WAV file of up to 20 minutes or 25 MiB.
-- With a speech model loaded beside other NPU models, images above 512x512 and transcriptions take turns at the NPU's
-  memory. Alternating them is slower, and a request that cannot fit answers 503.
+- With several large NPU models loaded (a speech model, `embeddinggemma-2`, `wemm-embedding-4b`, images above
+  512x512), they take turns at the NPU's memory. Alternating them is slower, and a request that cannot fit answers 503.
 - The NPU models are served in the default mode only, not in the two-container setup (`engine` and `api`).
 
 <a id="host"></a>

@@ -150,6 +150,7 @@ this server unchanged. Beside them sit halogen's own counters.
 | `halogen:requests_total`, `halogen:prompt_tokens_cached_total`, `halogen:draft_tokens_total`, `halogen:draft_tokens_accepted_total`, `halogen:structured_requests_total` | halogen's own request counters |
 | `halogen:kv_pool_positions`, `halogen:kv_pool_reserved_tokens` | pool positions; the front end's reservation |
 | `halogen:kv_pool_waiting_for_room` | requests waiting for pool room |
+| `halogen:queue_waited_total`, `halogen:queue_wait_seconds_total`, `halogen:queue_wait_longest_seconds`, `halogen:queue_gave_up_total` | requests that waited a second or more for a free slot, the seconds they waited, the longest wait now, and requests that gave up while waiting (the client left, or `HALOGEN_QUEUE_TIMEOUT` passed) |
 | `halogen:cache_hits_total`, `halogen:cache_misses_total`, `halogen:cache_prompt_tokens_saved_total`, `halogen:cache_entries`, `halogen:cache_bytes`, `halogen:cache_evicted_total` | the prompt cache's main numbers |
 | `halogen:cache_disk_enabled`, `halogen:cache_disk_bytes`, `halogen:cache_disk_budget_bytes`, `halogen:cache_disk_hits_total` | the cache's disk tier |
 | `halogen:cache_last_message_rewrites_total` | requests that resumed inside the previous request's last message (a client that changes or drops part of it each turn) and continued in that conversation's cache |

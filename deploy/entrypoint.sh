@@ -67,7 +67,11 @@ kv_budget_note() {
   kv_gib=$(awk -v s="$ENG_SLOTS" -v c="$ENG_CTX" -v p="$ENG_POOL" -v pool="${HALOGEN_KV_POOL:-1}" 'BEGIN{printf "%.1f", (pool=="0"?s*c*26624:p*29500+s*120586240)/1073741824}')
 
   cache_gib=$(awk -v c="$ENG_CTX" -v on="${HALOGEN_PROMPT_CACHE:-2}" -v ip="${HALOGEN_CACHE_INPLACE:-1}" -v f="${HALOGEN_CACHE_FILE:-}" -v n="${HALOGEN_CACHE_ENTRIES:-}" -v s="$ENG_SLOTS" -v br="${HALOGEN_CACHE_BRANCHES:-2}" -v s3="${HALOGEN_CACHE_SNAP3:-1}" -v fu="${HALOGEN_CACHE_FULL:-1}" 'BEGIN{if (n=="") n = s * (1 + br*((s3=="0")?1:2) + ((fu=="0")?0:1)); printf "%.1f", (on==0 || f!="")?0:(ip!="0"?n*115*1048576/1073741824:c*26624/1073741824)}')
-  avail_gib=$(awk '/MemAvailable/{printf "%.1f", $2/1048576}' /proc/meminfo 2>/dev/null || echo "?")
+
+  local mi="${_hg_proc:-/proc}/meminfo" cma_gib=0 free_gib=""
+  avail_gib=$(awk '/^MemAvailable/{a=$2} /^CmaFree/{c=$2} END{if (a != "") printf "%.1f", (a-c)/1048576}' "$mi" 2>/dev/null || echo "?")
+  cma_gib=$(awk '/^CmaFree/{printf "%.1f", $2/1048576; f=1} END{if (!f) print "0.0"}' "$mi" 2>/dev/null || echo 0)
+  free_gib=$(awk '/^MemFree/{printf "%.1f", $2/1048576}' "$mi" 2>/dev/null || echo "")
 
   local wt="68 GiB" w_gib=68 ft=""
   if ckpt_facts; then
@@ -86,7 +90,15 @@ kv_budget_note() {
   scratch_gib=$(echo "$ws" | awk '{printf "%.1f", $1 + $2}')
   [ -n "${HALOGEN_VISION_TOWER:-}" ] && [ "${HALOGEN_VISION_TOWER:-0}" != "0" ] && tower_gib=0.84
   w_gib=$(awk -v w="$w_gib" -v s="$scratch_gib" -v t="$tower_gib" 'BEGIN{printf "%.1f", w + s + t}')
-  used_gib=$(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{printf "%.1f", (t-a)/1048576}' /proc/meminfo 2>/dev/null || echo "0")
+  used_gib=$(awk '/^MemTotal/{t=$2} /^MemAvailable/{a=$2} /^CmaFree/{c=$2} END{printf "%.1f", (t-a+c)/1048576}' "$mi" 2>/dev/null || echo "0")
+
+  if [ -n "$free_gib" ] && [ "$avail_gib" != "?" ] && [ -n "$avail_gib" ] \
+     && awk -v f="$free_gib" -v a="$avail_gib" 'BEGIN{exit !(f < 1.5 && a >= 4)}'; then
+    echo "halogen: NOTE only ${free_gib} GiB of host RAM is free right now (MemFree), though ${avail_gib} GiB is reclaimable (MemAvailable). A start can stall while the kernel frees file cache for the GPU's allocations; if loading hangs, dropping the page cache on the host (sync; echo 3 > /proc/sys/vm/drop_caches, as root) releases it." >&2
+  fi
+  if awk -v c="$cma_gib" 'BEGIN{exit !(c >= 1)}'; then
+    echo "halogen: NOTE ${cma_gib} GiB of the memory counted as available is a contiguous-allocator pool the GPU cannot use; the budget below leaves it out." >&2
+  fi
   if awk -v u="$used_gib" 'BEGIN{exit !(u >= 10)}'; then
     echo "halogen: WARNING ${used_gib} GiB of host RAM is in use before this server starts. The server sizes itself from the machine's total and leaves a fixed" \
          "reserve for the OS and the model's 47.7 GiB lookup table, which is read through the file cache; whatever is already using those ${used_gib} GiB comes out of that cache." \
@@ -956,10 +968,10 @@ HALOGEN_FREQUENCY_PENALTY HALOGEN_KEEPALIVE_TIMEOUT HALOGEN_MAX_THINKING_TOKENS 
 HALOGEN_MAX_TOKENS_DEFAULT HALOGEN_MIN_P HALOGEN_MODEL_ID HALOGEN_NEXT_TOKEN_S HALOGEN_PRESENCE_PENALTY \
 HALOGEN_REASONING_EFFORT HALOGEN_RECORD_DAYS HALOGEN_RECORD_DIR HALOGEN_RECORD_GIB \
 HALOGEN_RECORD_TEXT HALOGEN_REPETITION_PENALTY HALOGEN_RETRY_GRACE_S HALOGEN_SSE_KEEPALIVE_S \
-HALOGEN_TEMPERATURE HALOGEN_TEMPLATE_UNCHECKED HALOGEN_THINKING_ANSWER_ROOM \
+HALOGEN_TEMPERATURE HALOGEN_TEMPLATE_CHECK HALOGEN_TEMPLATE_UNCHECKED HALOGEN_THINKING_ANSWER_ROOM \
 HALOGEN_STRICT_TOOLS HALOGEN_TOKENIZE_REUSE HALOGEN_TOP_K HALOGEN_TOP_P"
 
-FE_ONLY_FLAGS="$FE_ONLY_FLAGS HALOGEN_FORK_HANDLES HALOGEN_FORK_MAP"
+FE_ONLY_FLAGS="$FE_ONLY_FLAGS HALOGEN_FORK_AUTO_KEEPS HALOGEN_FORK_HANDLES HALOGEN_FORK_MAP"
 
 ENGINE_ENV_U=()
 for _v in $FE_ONLY_FLAGS; do ENGINE_ENV_U+=(-u "$_v"); done
@@ -1050,43 +1062,112 @@ npu_devices_of() {
 
 npu_stat() { stat -c '%A %U:%G' "$1" 2>/dev/null || ls -ld "$1" 2>/dev/null | awk '{print $1, $3 ":" $4}'; }
 
-npu_fclk() {
-  local r="$1" d perf top first=""
-  for d in "$r"/sys/class/drm/card*/device; do
-    [ -r "$d/pp_dpm_fclk" ] && [ -r "$d/power_dpm_force_performance_level" ] || continue
-    perf=$(cat "$d/power_dpm_force_performance_level" 2>/dev/null)
-    top=$(grep . "$d/pp_dpm_fclk" | tail -n 1)
-    if [ "$perf" = high ] || { [ "$perf" = manual ] && [ "$(grep -c '\*' "$d/pp_dpm_fclk")" = 1 ] && [ "${top%\*}" != "$top" ]; }; then
-      [ -n "$first" ] || first="held $(echo "$top" | awk '{print $2}')"
-    else
-      echo "${d#"$r"} ${top%%:*}"
-      return 0
-    fi
+npu_soc_gpu() {
+  local r="$1" p v minor dom loc want addr d real
+  for p in "$r"/sys/class/kfd/kfd/topology/nodes/*/properties; do
+    [ -r "$p" ] || continue
+    v=$(awk '$1 == "gfx_target_version" {print $2; exit}' "$p" 2>/dev/null)
+    case "$v" in 1105[0-9][0-9]) ;; *) continue ;; esac
+    minor=$(awk '$1 == "drm_render_minor" {print $2; exit}' "$p" 2>/dev/null)
+    dom=$(awk '$1 == "domain" {print $2; exit}' "$p" 2>/dev/null)
+    loc=$(awk '$1 == "location_id" {print $2; exit}' "$p" 2>/dev/null)
+    want=""; addr=""
+    case "$minor" in ''|*[!0-9]*) ;; *) [ -e "$r/sys/class/drm/renderD$minor/device" ] && want=$(readlink -f "$r/sys/class/drm/renderD$minor/device" 2>/dev/null) ;; esac
+    case "$dom:$loc" in *[!0-9:]*|:*|*:) ;; *) addr=$(printf '%04x:%02x:%02x.%x' "$dom" $((loc >> 8)) $(((loc >> 3) & 31)) $((loc & 7))) ;; esac
+    for d in "$r"/sys/class/drm/card*/device; do
+      [ -e "$d" ] || continue
+      real=$(readlink -f "$d" 2>/dev/null)
+      if { [ -n "$want" ] && [ "$real" = "$want" ]; } || { [ -n "$addr" ] && [ "${real##*/}" = "$addr" ]; }; then
+        echo "${d#"$r"}"; return 0
+      fi
+    done
   done
-  [ -n "$first" ] && echo "$first"
   return 0
 }
 
-npu_sysfs_write() { echo "$2" > "$1" 2>/dev/null; }
-NPU_FCLK_HELD=""
-npu_fclk_hold() {
-  local r="$1" d perf top lvl n=0
+npu_fclk_state() {
+  local d="$1" perf fclk top
+  perf=$(cat "$d/power_dpm_force_performance_level" 2>/dev/null)
+  fclk=$(cat "$d/pp_dpm_fclk" 2>/dev/null)
+  [ -n "$perf" ] && [ -n "$fclk" ] || return 0
+  top=$(printf '%s\n' "$fclk" | grep . | tail -n 1)
+  if [ "$perf" = high ] || { [ "$perf" = manual ] && [ "$(printf '%s\n' "$fclk" | grep -c '\*')" = 1 ] && [ "${top%\*}" != "$top" ]; }; then
+    echo "held $(printf '%s\n' "$top" | awk '{print $2}')"
+  else
+    echo "free ${top%%:*}"
+  fi
+}
+
+npu_fclk() {
+  local r="$1" soc d s held="" advice=""
+  soc=$(npu_soc_gpu "$r")
+  if [ -n "$soc" ]; then
+    s=$(npu_fclk_state "$r$soc")
+    case "$s" in
+      held*) echo "$s" ;;
+      free*) echo "$soc ${s#free }" ;;
+    esac
+    return 0
+  fi
+  for d in "$r"/sys/class/drm/card*/device; do
+    s=$(npu_fclk_state "$d")
+    case "$s" in
+      held*) [ -n "$held" ] || held="$s" ;;
+      free*) [ -n "$advice" ] || advice="${d#"$r"} ${s#free }" ;;
+    esac
+  done
+  if [ -n "$advice" ]; then echo "$advice"; elif [ -n "$held" ]; then echo "$held"; fi
+  return 0
+}
+
+npu_fclk_unknown() {
+
+  local r="$1" d out=""
+  [ -z "$(npu_soc_gpu "$r")" ] || return 0
   for d in "$r"/sys/class/drm/card*/device; do
     [ -e "$d/pp_dpm_fclk" ] && [ -e "$d/power_dpm_force_performance_level" ] || continue
-    [ -w "$d/pp_dpm_fclk" ] && [ -w "$d/power_dpm_force_performance_level" ] || return 1
-    perf=$(cat "$d/power_dpm_force_performance_level" 2>/dev/null)
-    lvl=$(grep . "$d/pp_dpm_fclk" | tail -n 1 | cut -d: -f1)
-    NPU_FCLK_HELD="$NPU_FCLK_HELD $d:$perf"
-    if ! npu_sysfs_write "$d/power_dpm_force_performance_level" manual || ! npu_sysfs_write "$d/pp_dpm_fclk" "$lvl"; then
-      npu_fclk_release > /dev/null; return 1
-    fi
-    n=$((n + 1))
+    [ -n "$(npu_fclk_state "$d")" ] || out="$out ${d#"$r"}"
   done
+  echo "$out"
+}
 
-  local t=0
-  [ "$n" -gt 0 ] && echo "halogen npu: holding the GPU's fabric clock (the driver takes a few seconds)"
-  while [ "$n" -gt 0 ] && [ "$t" -lt 300 ]; do
-    case "$(npu_fclk "$r")" in held*) trap npu_fclk_release EXIT; return 0 ;; esac
+npu_sysfs_write() { { echo "$2" > "$1"; } 2>/dev/null; }
+NPU_FCLK_HELD=""
+npu_fclk_hold() {
+  local r="$1" soc d s perf lvl written="" n=0 t=0 ok
+  soc=$(npu_soc_gpu "$r")
+  if [ -n "$soc" ]; then set -- "$r$soc"
+  else set -- "$r"/sys/class/drm/card*/device; fi
+  for d in "$@"; do
+
+    s=$(npu_fclk_state "$d")
+    case "$s" in
+      held*) continue ;;
+      free*) ;;
+      *) [ -z "$soc" ] && continue; return 1 ;;
+    esac
+    if [ ! -w "$d/pp_dpm_fclk" ] || [ ! -w "$d/power_dpm_force_performance_level" ]; then
+      [ -z "$soc" ] && continue; return 1
+    fi
+    lvl=${s#free }
+    perf=$(cat "$d/power_dpm_force_performance_level" 2>/dev/null)
+    if npu_sysfs_write "$d/power_dpm_force_performance_level" manual && npu_sysfs_write "$d/pp_dpm_fclk" "$lvl"; then
+      NPU_FCLK_HELD="$NPU_FCLK_HELD $d:$perf"; written="$written $d"; n=$((n + 1))
+    else
+      npu_sysfs_write "$d/power_dpm_force_performance_level" "$perf"
+      [ -z "$soc" ] || { npu_fclk_release > /dev/null; return 1; }
+    fi
+  done
+  [ "$n" -gt 0 ] || return 1
+
+  echo "halogen npu: holding the GPU's fabric clock (the driver takes a few seconds)"
+  while [ "$t" -lt 300 ]; do
+    ok=1
+    for d in $written; do case "$(npu_fclk_state "$d")" in held*) ;; *) ok=0 ;; esac; done
+    if [ "$ok" = 1 ]; then
+      case "$(npu_fclk "$r")" in held*) trap npu_fclk_release EXIT; return 0 ;; esac
+      break
+    fi
     sleep 0.1; t=$((t + 1))
   done
   npu_fclk_release > /dev/null
@@ -1144,6 +1225,12 @@ npu_model_ready() {
   case "$id" in ''|*/*|.*) echo "halogen npu: '$id' is not a model id" >&2; return 1 ;; esac
   pins=$(npu_pin_files "$id")
   [ "$part" = devices ] && pins=$(printf '%s\n' "$pins" | awk '$1 ~ /^devices\//')
+  if [ "$verify" != 0 ] && [ -z "$pins" ] && [ "$part" != devices ] && npu_pin_ids | grep -qxF -- "$id"; then
+
+    echo "halogen npu: $id is in this image's record, but its files are not recorded yet, so this image cannot check them." >&2
+    echo "  Name another model in HALOGEN_NPU_MODELS." >&2
+    return 1
+  fi
   if [ "$verify" != 0 ] && [ -z "$pins" ]; then
     known=$(npu_pin_ids | tr '\n' ' ' | sed 's/ *$//')
     [ -n "$known" ] && known="it knows: $known" || known="its table lists none"
@@ -1155,6 +1242,7 @@ npu_model_ready() {
   if [ -n "$pins" ] && { [ "$verify" != 0 ] || [ -n "${HALOGEN_DOWNLOAD:-}" ]; }; then
     paths=$(printf '%s\n' "$pins" | awk '{print $1}')
   elif [ "$part" = devices ]; then paths="devices/devices.hnpm"
+  elif [ "$(npu_devices_of "$id")" != "$id" ]; then paths="$id.hnpw tokenizer/tokenizer.json"
   else paths="devices/devices.hnpm $id.hnpw tokenizer/tokenizer.json"; fi
   for p in $paths; do [ -f "$d/$p" ] || missing="$missing $p"; done
   if [ -n "$missing" ] && [ -n "${HALOGEN_DOWNLOAD:-}" ]; then
@@ -1214,6 +1302,8 @@ PINS
   { [ "$part" = devices ] || [ "$own" = "$id" ]; } && dk=$(du -sk "$d/devices" | awk '{print $1}')
 
   [ "$part" != devices ] && [ -d "$d/enc" ] && dk=$(( dk + $(du -sk "$d/enc" | awk '{print $1}') ))
+
+  [ "$part" != devices ] && [ -d "$d/vis" ] && dk=$(( dk + $(du -sk "$d/vis" | awk '{print $1}') ))
   NPU_NEED_K=$(( ${NPU_NEED_K:-0} + sz / 1024 + dk ))
 }
 
@@ -1312,7 +1402,7 @@ npu_preflight() {
     return 1
   fi
 
-  local kp="$r/sys/class/kfd/kfd/proc" gp="" fc why
+  local kp="$r/sys/class/kfd/kfd/proc" gp="" fc why soc u o c
   if [ "${HALOGEN_NPU_WITH_GPU:-0}" != 1 ]; then
     if [ "$gpu" = 1 ]; then why="the Flash engine runs on the GPU beside it"
     elif [ -d "$kp" ]; then gp=$(ls "$kp" 2>/dev/null | tr '\n' ' '); why="a GPU compute process is running on this machine (process ${gp% })"
@@ -1332,12 +1422,27 @@ npu_preflight() {
       case "$fc" in
         held*) echo "halogen npu: $why; the GPU's fabric clock is held at its top speed (${fc#held }), so the NPU starts beside it" ;;
         *) echo "halogen npu: $why, and the GPU's fabric clock is not held at its top speed. On this chip the GPU and the NPU at once can hang the machine and corrupt the NPU's results while that clock changes speed." >&2
+           soc=$(npu_soc_gpu "$r")
            if [ -n "$fc" ]; then
              echo "  Hold it once per boot, as root on the host: echo manual > ${fc%% *}/power_dpm_force_performance_level; echo ${fc##* } > ${fc%% *}/pp_dpm_fclk" >&2
              echo "  (or install the host unit, halogen-fabric-clock.service, which does it at every boot; undo: echo auto > ${fc%% *}/power_dpm_force_performance_level)." >&2
              echo "  Or run this container as root (docker run, sudo podman run) with -v /sys:/host/sys: it then holds the clock itself while it runs." >&2
+           elif [ -n "$soc" ]; then
+             echo "  This container cannot read the GPU's clock controls ($soc, this chip's own GPU), so it cannot tell." >&2
            else
              echo "  This container cannot read the GPU's clock controls (/sys/class/drm/card*/device/pp_dpm_fclk), so it cannot tell." >&2
+           fi
+           if [ -n "$soc" ]; then
+
+             o=""
+             for c in "$r"/sys/class/drm/card*/device; do
+               [ -e "$c/pp_dpm_fclk" ] && [ "${c#"$r"}" != "$soc" ] && o="$o ${c#"$r"}"
+             done
+             [ -n "$o" ] && echo "  Only this chip's own GPU ($soc) counts: the NPU shares its fabric, not another card's. Not counted:$o" >&2
+           else
+
+             u=$(npu_fclk_unknown "$r")
+             [ -n "$u" ] && echo "  Not counted, their clock controls could not be read (a suspended amdgpu device answers EBUSY):$u" >&2
            fi
            echo "  Or start without HALOGEN_NPU_MODELS. HALOGEN_NPU_WITH_GPU=1 starts anyway, at that risk." >&2
            return 1 ;;
@@ -1362,7 +1467,7 @@ npu_memlock() {
 }
 
 start_npu_engine() {
-  local gpu="$1" port="${HALOGEN_NPU_PORT:-8740}" ids id n=0 first=1 rc dev w tokd own enc
+  local gpu="$1" port="${HALOGEN_NPU_PORT:-8740}" ids id n=0 first=1 rc dev w tokd own enc vis
   local bin="${_hg_npu_bin:-/usr/local/bin/halogen-npu}"
   local -a nargs
   npu_retired || exit 1
@@ -1375,7 +1480,7 @@ start_npu_engine() {
   NPU_API_ARGS=(--npu "127.0.0.1:$port")
   nargs=(listen)
   for id in $ids; do
-    enc=""
+    enc=""; vis=""
     case "$id" in
       /*) npu_finetune_ready "$id" || exit 1
           dev="$NPU_FT_DEV"; w="$NPU_FT_W"; tokd="${id%/}" ;;
@@ -1384,11 +1489,14 @@ start_npu_engine() {
          if [ "$own" != "$id" ]; then npu_model_ready "$own" "$NPU_DIR" devices || exit 1; fi
          dev="$NPU_DIR/$own/devices"; w="$NPU_DIR/$id/$id.hnpw"; tokd="$NPU_DIR/$id/tokenizer"
 
-         [ -f "$NPU_DIR/$id/enc/devices.hnpm" ] && enc="$NPU_DIR/$id/enc" ;;
+         [ -f "$NPU_DIR/$id/enc/devices.hnpm" ] && enc="$NPU_DIR/$id/enc"
+
+         [ -f "$NPU_DIR/$id/vis/devices.hnpm" ] && vis="$NPU_DIR/$id/vis" ;;
     esac
     if [ "$first" = 1 ]; then nargs+=("$dev" "$w" "127.0.0.1:$port"); NPU_TOK1="$tokd"; first=0
     else nargs+=(--model "$dev" "$w"); fi
     [ -n "$enc" ] && nargs+=(--model "$enc" "$enc/weights.hnpw")
+    [ -n "$vis" ] && nargs+=(--model "$vis" "$vis/weights.hnpw")
     NPU_API_ARGS+=(--npu-tokenizer "$tokd")
   done
   npu_memlock "$NPU_NEED_K" || exit 1

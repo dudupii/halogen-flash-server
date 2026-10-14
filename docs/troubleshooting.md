@@ -11,6 +11,8 @@
 | starts fine, crawls on long prompts, disk busy | [starts but crawls](#if-the-server-starts-but-crawls-on-long-prompts) |
 | `Memory critical error by agent node-0` on Fedora | [Fedora and SELinux](#if-the-load-fails-on-fedora-with-memory-critical-error) |
 | `HSA_STATUS_ERROR_INVALID_DISPATCH_PARAMETERS` on a short prompt or an image | [old GPU firmware](#if-the-server-stops-on-a-short-prompt-or-an-image-invalid_dispatch_parameters) |
+| a streamed request gets a `200` and keepalives but no tokens | [a request waits with no output](#if-a-request-waits-with-no-output) |
+| a second AMD GPU in the machine | [a second GPU](#if-the-host-has-a-second-amd-gpu) |
 | slow everywhere, no error | [the host settings measured on](#the-host-settings-these-numbers-were-measured-on) |
 
 ## If the server will not start: "out of memory"
@@ -219,6 +221,33 @@ cat /sys/class/drm/card*/device/fw_version/mec_fw_version
 On 0.18.1 and earlier, set `-e HALOGEN_QSA_FORCE_SEL=1`. It is safe at any
 prompt length and costs about nothing.
 
+## If a request waits with no output
+
+**Every slot is busy, and the request is queued until one frees.** The client sees a `200` and
+keepalive comments, which keep its own timeout from firing. Since 0.18.3 the log says so after
+30 s, again every five minutes, and once more when the request starts or gives up:
+
+```
+serve_api: a request has waited 30 s for a slot: 2 of 2 slot(s) busy, the oldest request has run 1412 s; ...
+serve_api: the request that waited started after 1505 s
+```
+
+`/health` reports `longest_wait_s` beside `queued`, and `/metrics` counts the waits
+(`halogen:queue_wait_*`, `halogen:queue_gave_up_total`). To bound the wait, set
+`HALOGEN_QUEUE_TIMEOUT`. For more requests at once, raise `HALOGEN_KV_SLOTS`: the slots share
+one KV pool, so a slot costs little memory.
+
+## If the host has a second AMD GPU
+
+**The server runs on the Strix Halo GPU by itself.** Since 0.18.3 it picks that GPU whatever
+order ROCm lists the cards in, and prints one line naming it when more than one GPU is visible.
+`HALOGEN_GPU_DEVICE` picks another device by its HIP number (`0`, `1`, ...), or `first` for
+device 0.
+
+With NPU models, only the Strix Halo GPU's fabric clock has to be held; the other card's state
+does not count. A refusal names the card to hold, and the host unit
+(`deploy/host/halogen-fabric-clock`) holds that card only.
+
 ## The host settings these numbers were measured on
 
 **Native Linux only.** This server runs on the amdgpu/KFD driver stack and
@@ -362,3 +391,4 @@ of our machines exposes the file.
 | 0.6.3 | lookup-table rows read 64 at a time (a cold long prompt costs seconds, not minutes) |
 | 0.11.9 | the GTT pre-flight counters and warning; the pin-guard line names the shortfall and the levers; the watchdog stopped killing engines silent inside the kernel |
 | 0.12.2 | GPU and process core dumps disabled in the container, so a memory fault ends in seconds |
+| 0.18.3 | a queued request is logged, counted and shown in `/health`; a second AMD GPU no longer stops the server or the NPU start |

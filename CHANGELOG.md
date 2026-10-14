@@ -1,5 +1,101 @@
 # Changelog
 
+## 0.18.3
+
+Three new NPU models and image edits. A server that says when a request is waiting. Fixes for
+hosts with a second GPU, and for replies that ran on past their end. The Flash checkpoints are unchanged.
+At temperature 0 the output is still byte-identical to serial greedy decode.
+For the reports: issues #173 ([@erlendstromsvik](https://github.com/erlendstromsvik)),
+#171 ([@vladsimachkov](https://github.com/vladsimachkov)),
+#143 and #161 ([@dardeaw](https://github.com/dardeaw)),
+#155 ([@earthquake02](https://github.com/earthquake02)),
+#163 ([@nr23730](https://github.com/nr23730)).
+
+### Added
+
+- **EmbeddingGemma 2 on the NPU** (#143). `embeddinggemma-2` embeds text up to
+  8,192 tokens, pictures and audio clips into one space on `/v1/embeddings`.
+  Send a picture as an `image_url` item or an audio clip as an `input_audio`
+  item (WAV, up to 30 seconds). `prompt_name` picks the model's `query` or
+  `document` prompt. Name it in `HALOGEN_NPU_MODELS`.
+
+- **WeMM-Embedding-4B on the NPU** (#155). `wemm-embedding-4b` embeds text and
+  pictures into one space on `/v1/embeddings`. Pictures larger than 768
+  pixels on a side are scaled down. It runs on the `decider-4b` program, so
+  the two share one download of it.
+
+- **Image edits and variations on the NPU** (#163). `/v1/images/edits` and
+  `/v1/images/variations` take a picture and return a new 512x512 one, with
+  `flux2-klein-4b`. `HALOGEN_NPU_IMAGE_EDITS=0` turns them off.
+
+- **A streaming safety check for chat replies**, opt-in. With
+  `qwen3guard-stream-0.6b` loaded, a chat request that sets `guard` (or the
+  `X-Halogen-Guard` header) gets the reply checked as it streams, with an
+  event when a part looks unsafe. It watches and reports; it does not stop
+  the reply.
+
+- **A request that waits for its turn now says so** (#171). After 30 s in the queue the log
+  names what it waits for (busy slots, how long the oldest has run, the positions it reserves,
+  how many are ahead), again every five minutes, and once more when it starts or gives up.
+  `/metrics` adds `halogen:queue_waited_total`, `halogen:queue_wait_seconds_total`,
+  `halogen:queue_wait_longest_seconds` and `halogen:queue_gave_up_total`. `/health` adds
+  `longest_wait_s` beside `queued`.
+
+- **`max_tokens: -1`** asks for the most the server allows (the cap, or the room left).
+  It used to return one token. `0` and other negative values are refused
+  with a 400.
+
+- **llama.cpp-shaped `/props`, `/slots`, `/tokenize` and `/detokenize`.**
+
+- **Codex tool namespaces** come back on `function_call` items, so a namespaced tool call
+  round-trips.
+
+- **`HALOGEN_FORK_MAP=auto`**, opt-in: each conversation's reply end is kept, so the next
+  turn starts from it. Needs `HALOGEN_FORK=1`.
+
+- **`HALOGEN_TEMPLATE_CHECK`** (default `warn`): a startup line that says whether the loaded
+  chat template re-renders a conversation the way the prompt cache needs to reuse earlier turns.
+
+- **A host with a second AMD GPU runs on the Strix Halo GPU by itself.** The server used to
+  take whichever GPU ROCm listed first, and stopped at its first kernel when that was an
+  external card. `HALOGEN_GPU_DEVICE` picks another device by number.
+
+### Changed
+
+- Image generation on the NPU is a little slower, and its pictures are the
+  same. On some machines the faster setting could, rarely, return a wrong
+  picture without an error. `HALOGEN_NPU_FLUX_REUSE=1` brings back the
+  faster setting.
+
+- Decisions on the NPU are a little faster.
+
+### Fixed
+
+- **A client that hangs up while its request is queued leaves the queue at once.** It used
+  to take a slot when its turn came.
+
+- **A generation that ends with the model's second end-of-text token now stops** (#173).
+  The model declares two, and the server stopped on one, so such a reply ran on to
+  `max_tokens` past where the model had finished, and came back empty or with text after
+  the end.
+
+- **A host with an external AMD GPU starts with NPU models.** The fabric-clock check now
+  reads only the Strix Halo GPU, so another card's state neither blocks the start nor stands
+  in for it. The host unit (`deploy/host/halogen-fabric-clock`) holds that GPU's clock only.
+
+- **The memory budget at startup** counts memory the kernel keeps for contiguous
+  allocations (`CmaFree`) as not available, on hosts that reserve it.
+
+- **`HALOGEN_ADMIT_CHUNK`'s startup line** shows the value it read beside the piece it
+  uses (#161). With `HALOGEN_PROMPT_CACHE=1` a smaller value rounds up to one prefill
+  chunk, which the line now says.
+
+- `HALOGEN_NPU_VERIFY=0` refused the rerankers and the guard models at
+  start. They start now.
+
+- An embedding model on the NPU could miss a speed setting in the first
+  request after the driver loaded. It no longer does.
+
 ## 0.18.2
 
 Strict tool schemas. Decisions on the NPU that take a longer text and can reuse
