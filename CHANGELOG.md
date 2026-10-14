@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.18.4
+
+Prompts are processed faster at most lengths, a large token budget runs in the room the context
+has instead of failing, and replies say how their speculation went. The Flash checkpoints are
+unchanged. At temperature 0 the output is still byte-identical to serial greedy decode.
+For the reports: issues #174 and #175 ([@Tsury](https://github.com/Tsury)),
+#178 ([@slamdunk111](https://github.com/slamdunk111)).
+
+### Changed
+
+- **Prompts are processed faster** at most prompt lengths. The engine now computes them in a
+  slightly different order, so a reply can differ a little from 0.18.3's for the same prompt.
+  Prompt-cache entries that 0.18.3 saved to disk (`HALOGEN_CACHE_DIR`) are not reused after the
+  upgrade: each conversation's next request is processed in full once.
+
+### Fixed
+
+- **A token budget larger than the room the prompt leaves now runs in that room** (#178), instead
+  of a 400. The reply says so in `timings.max_tokens_clamped_from` / `max_tokens_clamped_to`, and
+  the log line reads `max_tokens clamped`. A budget over the server's cap, and a prompt longer
+  than the context, still answer 400.
+- **Two token budget names that disagree no longer fail** (#178). The server uses
+  `max_completion_tokens` when it is sent, then `max_output_tokens`, then `max_tokens`, and logs
+  which value it used.
+- **A client that leaves while its request waits for a slot gives the slot back** (#174), also
+  when the slot comes free in the same moment it leaves.
+
+### Added
+
+- **`timings.speculation`** (#175): the drafter, its rounds, and the draft head's and prompt
+  lookup's rounds, drafted and accepted tokens, which add up to `draft_n` and `draft_n_accepted`.
+- **Request records keep the budgets.** With `HALOGEN_RECORD_DIR` set, each record's `req` now
+  holds `max_tokens`, `max_thinking_tokens` (as sent, or the server's default), and `think_cap`
+  with `think_src`: the thinking budget the request actually ran with and what set it.
+
+### Known issue
+
+- **K-quant GGUF files and concurrent requests** (#172). With unsloth's `UD-Q4_K_XL`, a request
+  that overlaps another one can return an empty reply. The same requests are normal on
+  `UD-IQ4_XS` and on the engine's own checkpoints; use one of those if you serve more than one
+  request at a time.
+
 ## 0.18.3
 
 Three new NPU models and image edits. A server that says when a request is waiting. Fixes for

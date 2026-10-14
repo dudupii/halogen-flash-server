@@ -15,7 +15,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_CHECKPOINT=/models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.3
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.4
 ```
 
 Name any shard of a split; the siblings are found by name. With
@@ -143,6 +143,11 @@ draft head accepts about as often (49% against 45% on prose). It carries the
 same 4 GiB of draft head and tokenizer and the same refusals; every
 speculative stream is byte-identical to serial greedy on it too.
 
+**Known issue (0.18.4): K-quant files and concurrent requests** (issue #172). On `UD-Q4_K_XL`, a
+request that overlaps another one can return an empty reply: its first token ends the turn. The
+same requests are normal on `UD-IQ4_XS` and on the engine's own checkpoints. If you serve more
+than one request at a time, use one of those.
+
 **Startup.** The repack reads the whole file once, on eight threads
 (`HALOGEN_GGUF_THREADS`): **18 s from a cold disk on the reference machine,
 9 s with the file in the page cache**, and every start pays it, because the
@@ -182,7 +187,7 @@ podman run --rm \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/gguf-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.3 \
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.4 \
   convert /models/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf /models/flash-next-iq4xs.hgn
 ```
 
