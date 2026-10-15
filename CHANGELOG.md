@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.18.5
+
+Decoding is faster in two places: a strict tool call (greedy and sampled requests), and a draft chain that now stops when the
+draft head is unsure (greedy requests). The Flash checkpoints are unchanged. At temperature 0 the output is still
+byte-identical to serial greedy decode.
+
+### Changed
+
+- **Tool calls under strict tools decode faster.** Inside a tool call whose arguments the schema
+  forces (names, keys, punctuation), the server now proposes the forced text itself and checks it
+  in one step of up to 8 rows. Greedy requests: on a coding-agent session an agent's tool-call decode
+  ran 15 to 20% faster and its whole turn 1 to 3% faster, with identical replies. Sampled requests
+  use the same drafter and keep their output distribution; tool-call decode ran about 20% faster at
+  temperature 1.0 and between no change and 18% faster at 0.7 (sampled sessions differ from run to
+  run, so treat these as a range). `HALOGEN_GRAMMAR_DRAFT=0` turns it off; `HALOGEN_GRAMMAR_DRAFT_SAMPLED=0`
+  turns it off for sampled requests only.
+- **The draft head's chain stops when it is unsure.** For a greedy request the head proposes up to
+  seven tokens a round and ends the chain at the first one it is less than 90% sure of
+  (`HALOGEN_MTP_GATE_P`, `0` = the previous fixed two or three). Decode over our ten-prompt `bench` set
+  ran 6.4% faster on v2 and 5.2% on ht43 (60.3 to 64.2 and 61.5 to 64.7 tokens per second); code
+  gains most. Replies are identical. Sampled requests are not changed by this rule.
+- The server reserves room for 8-row checks instead of 4: about 18 MiB more device memory.
+  Prompt-cache entries saved to disk by 0.18.4 stay valid.
+
+### Added
+
+- **`timings.speculation.grammar`**: the rounds, drafted and accepted tokens of the tool-call
+  drafter, beside `head` and `lookup`; the three add up to `draft_n` and `draft_n_accepted`.
+
 ## 0.18.4
 
 Prompts are processed faster at most lengths, a large token budget runs in the room the context
