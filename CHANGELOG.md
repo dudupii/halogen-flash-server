@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.18.7
+
+Short replies decode quickly again, and GGUF checkpoints decode faster. The Flash checkpoints are
+unchanged. At temperature 0 the output is still byte-identical to serial greedy decode.
+
+### Fixed
+
+- **Short replies were slower since 0.18.5** (#186, reported by @George000017). The draft head
+  kept proposing tokens past the end of the turn, so the last step of every reply did extra work,
+  and on a reply of a few tokens that step is most of the decode time. A draft chain now ends at
+  the end of the turn. On one-word answers, decode went from 41 to 72 tok/s on v2, from 42 to 72
+  tok/s on ht43 and from 31 to 54 tok/s on a GGUF (UD-IQ4_XS), above 0.18.4 on all three. Longer
+  replies are unchanged, and so is the output.
+
+### Changed
+
+- **GGUF checkpoints decode faster.** On a GGUF the draft head now scores a short list of likely
+  tokens, as it already did on the native checkpoints, instead of the whole vocabulary. Greedy
+  decode of long replies on UD-IQ4_XS went from 53.1 to 57.8 tok/s (+9%). Sampled decode is
+  unchanged.
+
 ## 0.18.6
 
 Sampled requests decode faster, and a new flag swaps the chat template without moving files.

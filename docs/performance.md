@@ -6,6 +6,23 @@ checkpoint a machine, with the conditions each table names. Decode depends
 on how predictable the text is: quote the row for the kind of text you
 run, never one number for all of them.
 
+## 0.18.7 against 0.18.6
+
+The published 0.18.7 image at its defaults (prompt cache on unless a row says otherwise, thinking off), each row an A/B pair on one machine in one session, the same machines as the 0.18.6 table below: v2 and the GGUF on one Ryzen AI Max+ 395 (128 GB) at about 85 W of sustained package power, ht43 on another at its stock settings, about 120 W. 0.18.6 is the left figure of each pair.
+
+| | v2 | ht43 |
+|---|---|---|
+| one-word answers, greedy (six prompts, five times each): 0.18.6 / 0.18.7 | 41.4 / 72.3 tok/s | 41.7 / 71.7 tok/s |
+| long replies, greedy, 512 tokens (four prompts, twice each) | 69.6 / 69.6 tok/s | 69.7 / 69.9 tok/s |
+| sampled, temperature 0.7, top_k 20, top_p 0.95, 512 tokens (two prompts, four seeds) | 69.5 / 69.8 tok/s | 66.8 / 67.1 tok/s |
+| `bench` with drafting over ten prompt shapes, greedy, mean | 64.4 / 64.4 tok/s | 64.7 / 64.7 tok/s |
+| prefill cache off, 8,192 / 32,768 | 1,804 / 1,745 vs 1,805 / 1,745 | 1,724 / 1,764 vs 1,722 / 1,759 |
+| prefill cache on (cold), 8,192 / 32,768 | 1,762 / 1,786 vs 1,763 / 1,787 | 1,752 / 1,772 vs 1,753 / 1,777 |
+
+UD-IQ4_XS (unsloth's GGUF with the draft head file beside it), on the v2 machine: one-word answers 30.7 / 54.0 tok/s, long replies greedy 53.1 / 57.8 tok/s, sampled 49.1 / 49.5 tok/s.
+
+The one-word, long and sampled rows count decode time after the first token, two runs an image; the sampled rows read as a range, since sampled text differs from run to run.
+
 ## 0.18.6 against 0.18.5
 
 The published 0.18.6 image at its defaults (prompt cache on unless a row says otherwise, thinking off), each row an A/B pair on one machine in one session, the same machines as the 0.18.5 table below: v2 on one Ryzen AI Max+ 395 (128 GB) at about 85 W of sustained package power, ht43 on another at its stock settings, about 120 W. 0.18.5 is the left figure of each pair.
@@ -241,8 +258,8 @@ produced byte-identical output on every case**, on both checkpoints.
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.6 bench serial,mtp 256 low 3
-podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.6 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.7 bench serial,mtp 256 low 3
+podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.7 sweep -p 8192,32768 -n 128
 ```
 
 Run the sweep with the prompt cache off, as above. It repeats one prompt per
