@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.18.6
+
+Sampled requests decode faster, and a new flag swaps the chat template without moving files.
+The Flash checkpoints are unchanged. At temperature 0 the output is still byte-identical to
+serial greedy decode, and greedy speed is unchanged.
+
+### Changed
+
+- **Sampled requests decode faster.** For a request with a temperature above 0 that runs alone,
+  the draft head now proposes up to seven tokens a round instead of three, and stops early when
+  its own draws become unlikely. The output keeps the model's distribution; a reply sampled with
+  a fixed seed can read differently from 0.18.5's. Over our ten-prompt `bench` set, code decoded
+  7 to 12% faster than on 0.18.5 at temperature 0.7 and 1.0, the whole set 4 to 5% faster, and
+  chat and prose within 1%; several requests decoding at once are unchanged.
+  `HALOGEN_SAMPLED_DEPTH=3 HALOGEN_SAMPLED_GATE=0.95,0.97` restores 0.18.5's sampled path.
+
+### Added
+
+- **`HALOGEN_CHAT_TEMPLATE`**: the path of one jinja file that replaces the tokenizer's chat
+  template, for comparing templates without moving files around. The startup line and `/health`
+  name the file and its sha256, and the template checks run on it; a missing or unreadable file
+  stops the server at start with one line naming the path. Unset, nothing changes.
+
 ## 0.18.5
 
 Decoding is faster in two places: a strict tool call (greedy and sampled requests), and a draft chain that now stops when the

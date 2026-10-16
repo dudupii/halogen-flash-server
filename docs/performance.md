@@ -6,6 +6,22 @@ checkpoint a machine, with the conditions each table names. Decode depends
 on how predictable the text is: quote the row for the kind of text you
 run, never one number for all of them.
 
+## 0.18.6 against 0.18.5
+
+The published 0.18.6 image at its defaults (prompt cache on unless a row says otherwise, thinking off), each row an A/B pair on one machine in one session, the same machines as the 0.18.5 table below: v2 on one Ryzen AI Max+ 395 (128 GB) at about 85 W of sustained package power, ht43 on another at its stock settings, about 120 W. 0.18.5 is the left figure of each pair.
+
+| | v2 | ht43 |
+|---|---|---|
+| `bench` with drafting over ten prompt shapes, greedy, mean: 0.18.5 / 0.18.6 | 64.2 / 64.2 tok/s | 64.6 / 64.6 tok/s |
+| prefill cache off, 8,192 / 32,768: 0.18.5 / 0.18.6 | 1,804 / 1,746 vs 1,806 / 1,747 | 1,728 / 1,768 vs 1,724 / 1,767 |
+| prefill cache on (cold), 8,192 / 32,768: 0.18.5 / 0.18.6 | 1,763 / 1,787 vs 1,763 / 1,788 | 1,755 / 1,777 vs 1,757 / 1,782 |
+| sampled, temperature 0.7, top_p 0.8, the two code prompts: 0.18.5 / 0.18.6 | 69.1 / 75.5 tok/s | 68.7 / 77.2 tok/s |
+| sampled, temperature 0.7, top_p 0.8, all ten prompts | 61.1 / 63.8 tok/s | 61.3 / 64.5 tok/s |
+| sampled, temperature 1.0, top_p 0.95, the two code prompts | 67.9 / 72.6 tok/s | 67.1 / 73.3 tok/s |
+| sampled, temperature 1.0, top_p 0.95, all ten prompts | 58.9 / 61.2 tok/s | 59.2 / 61.4 tok/s |
+
+The sampled rows are means over four seeds a prompt and two runs an image, one request at a time; sampled text differs from run to run, so read them as a range.
+
 ## 0.18.5 against 0.18.4
 
 The published 0.18.5 image at its defaults (prompt cache on unless a row says otherwise, greedy, thinking off), each row an A/B pair on one machine in one session, the same machine class as the 0.18.0 tables below: v2 on one Ryzen AI Max+ 395 (128 GB) at about 85 W of sustained package power, ht43 on another at its stock settings, about 120 W. 0.18.4 is the left figure of each pair.
@@ -225,8 +241,8 @@ produced byte-identical output on every case**, on both checkpoints.
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.5 bench serial,mtp 256 low 3
-podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.5 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.6 bench serial,mtp 256 low 3
+podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.6 sweep -p 8192,32768 -n 128
 ```
 
 Run the sweep with the prompt cache off, as above. It repeats one prompt per
