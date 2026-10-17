@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.18.8
+
+Long conversations keep their prompt cache, and a coding agent's subagents reuse the project
+context their parent already sent. The Flash checkpoints are unchanged. At temperature 0 the
+output is still byte-identical to serial greedy decode, and decode and prefill speed are unchanged.
+
+### Changed
+
+- **A long conversation keeps its cache when many short ones arrive in between.** At the cache's
+  entry limit the server used to forget the least recently used conversation first, so a long
+  coding session interrupted by a few dozen short requests paid for its whole prompt again. It now
+  keeps each conversation until about its own length of other work has been processed since it was
+  last used. On a 174,000-token conversation, the next turn after 24 and after 40 other short
+  conversations started in 1.1 to 1.2 s instead of 97 to 106 s, on both of our machines. Workloads
+  that never reach the limit are unchanged. `HALOGEN_CACHE_EVICT=1` restores 0.18.7's rule.
+
+### Added
+
+- **Subagents reuse the project context.** Claude Code and Codex send the same project
+  instructions at the start of every new thread, the main agent's and each subagent's. The server
+  now keeps that shared part cached on its own, so a subagent starts from it instead of
+  reprocessing it. In a session of three rounds of a main agent fanning out three subagents, with
+  eight unrelated conversations in between, the prompt tokens processed without the cache fell
+  by 61% and the session took 257 s instead of 629 s. Other harnesses already put the project
+  instructions in the system prompt, which was cached before. `HALOGEN_CACHE_LEAD=0` turns it off.
+
+### Fixed
+
+- **NPU models under a concurrent mix on the stock kernel driver.** With several NPU models busy
+  at once, the driver's device memory ran out and requests were refused and retried, logging
+  kernel errors. The NPU runtime now budgets that memory before asking for it. In our
+  all-models-busy test the kernel's memory errors went from 230 to 0, every answer unchanged.
+
 ## 0.18.7
 
 Short replies decode quickly again, and GGUF checkpoints decode faster. The Flash checkpoints are
