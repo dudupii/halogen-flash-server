@@ -58,7 +58,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_NPU_MODELS=decider-0.8b,qwen3-embedding-0.6b,qwen3-reranker-0.6b,qwen3guard-gen-0.6b,qwen3.5-2b \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.8
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.9
 ```
 
 `HALOGEN_DOWNLOAD` fetches the files of the NPU models that `HALOGEN_NPU_MODELS` names, into `/models/npu`, and the
@@ -331,7 +331,8 @@ curl -s localhost:8731/v1/images/edits -F model=flux2-klein-4b -F image=@photo.p
 - `prompt`: the change, in words. An edit needs one. A variation takes none: it is the picture under an empty
   instruction, and each `seed` gives another one.
 - `mask` is refused. The model edits by instruction, so describe the part to change in the prompt.
-- `size`: `512x512` or `auto`. Every edit comes out at 512x512.
+- `size`: `512x512`, `auto`, or any size generations serve. Every edit comes out at 512x512 and the response's `size`
+  says so, so a client that keeps one size setting for both routes can edit what it generated.
 - `n` (one to four), `response_format` (`b64_json` or `url`), `output_format` (`png`) and `seed` work as they do for
   generations. A `model` that is not one of the server's own (OpenAI's `gpt-image-1`, say) reaches the loaded image
   model.

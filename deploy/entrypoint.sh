@@ -62,11 +62,14 @@ if [ -n "$ROPE_YARN" ] && [ "$ENG_CTX" -le 262144 ]; then
 fi
 
 kv_budget_note() {
+
+  local KV_PP=29500 KV_ROWS=26624
+  if [ "${HALOGEN_KV8:-}" = 1 ]; then KV_PP=16712; KV_ROWS=13832; fi
   local kv_gib avail_gib
 
-  kv_gib=$(awk -v s="$ENG_SLOTS" -v c="$ENG_CTX" -v p="$ENG_POOL" -v pool="${HALOGEN_KV_POOL:-1}" 'BEGIN{printf "%.1f", (pool=="0"?s*c*26624:p*29500+s*120586240)/1073741824}')
+  kv_gib=$(awk -v s="$ENG_SLOTS" -v c="$ENG_CTX" -v p="$ENG_POOL" -v pool="${HALOGEN_KV_POOL:-1}" -v pp="$KV_PP" -v rr="$KV_ROWS" 'BEGIN{printf "%.1f", (pool=="0"?s*c*rr:p*pp+s*120586240)/1073741824}')
 
-  cache_gib=$(awk -v c="$ENG_CTX" -v on="${HALOGEN_PROMPT_CACHE:-2}" -v ip="${HALOGEN_CACHE_INPLACE:-1}" -v f="${HALOGEN_CACHE_FILE:-}" -v n="${HALOGEN_CACHE_ENTRIES:-}" -v s="$ENG_SLOTS" -v br="${HALOGEN_CACHE_BRANCHES:-2}" -v s3="${HALOGEN_CACHE_SNAP3:-1}" -v fu="${HALOGEN_CACHE_FULL:-1}" 'BEGIN{if (n=="") n = s * (1 + br*((s3=="0")?1:2) + ((fu=="0")?0:1)); printf "%.1f", (on==0 || f!="")?0:(ip!="0"?n*115*1048576/1073741824:c*26624/1073741824)}')
+  cache_gib=$(awk -v c="$ENG_CTX" -v on="${HALOGEN_PROMPT_CACHE:-2}" -v ip="${HALOGEN_CACHE_INPLACE:-1}" -v f="${HALOGEN_CACHE_FILE:-}" -v n="${HALOGEN_CACHE_ENTRIES:-}" -v s="$ENG_SLOTS" -v br="${HALOGEN_CACHE_BRANCHES:-2}" -v s3="${HALOGEN_CACHE_SNAP3:-1}" -v rr="$KV_ROWS" -v fu="${HALOGEN_CACHE_FULL:-1}" 'BEGIN{if (n=="") n = s * (1 + br*((s3=="0")?1:2) + ((fu=="0")?0:1)); printf "%.1f", (on==0 || f!="")?0:(ip!="0"?n*115*1048576/1073741824:c*rr/1073741824)}')
 
   local mi="${_hg_proc:-/proc}/meminfo" cma_gib=0 free_gib=""
   avail_gib=$(awk '/^MemAvailable/{a=$2} /^CmaFree/{c=$2} END{if (a != "") printf "%.1f", (a-c)/1048576}' "$mi" 2>/dev/null || echo "?")
@@ -107,12 +110,12 @@ kv_budget_note() {
   fi
   if [ "${HALOGEN_KV_POOL:-1}" = "0" ]; then
     echo "halogen: KV budget ${ENG_SLOTS} slot(s) x ${ENG_CTX} ctx = ${kv_gib} GiB" \
-         "(~26 KiB/position/slot, HALOGEN_KV_POOL=0) + ${cache_gib} GiB prompt cache in RAM${HALOGEN_CACHE_FILE:+ (snapshot on file)}, on top of roughly ${wt}" \
+         "(~$((KV_ROWS / 1024)) KiB/position/slot, HALOGEN_KV_POOL=0) + ${cache_gib} GiB prompt cache in RAM${HALOGEN_CACHE_FILE:+ (snapshot on file)}, on top of roughly ${wt}" \
          "of weights and ${scratch_gib} GiB of working memory (HALOGEN_MAX_TOK ${ENG_MAX_TOK}). Those last two are estimates for this pre-flight check; the engine prints its measured figures once loaded," \
          "including the large lookup table it reads from disk and never holds. MemAvailable now ${avail_gib} GiB."
   else
     echo "halogen: KV budget ${ENG_SLOTS} slot(s) over one ${ENG_POOL}-position pool (each request up to ${ENG_CTX}) = ${kv_gib} GiB" \
-         "(~28 KiB/position incl. block scratch + ~115 MiB/slot) + ${cache_gib} GiB prompt cache in RAM${HALOGEN_CACHE_FILE:+ (snapshot on file)}, on top of roughly ${wt}" \
+         "(~$((KV_PP / 1024)) KiB/position incl. block scratch + ~115 MiB/slot) + ${cache_gib} GiB prompt cache in RAM${HALOGEN_CACHE_FILE:+ (snapshot on file)}, on top of roughly ${wt}" \
          "of weights and ${scratch_gib} GiB of working memory (HALOGEN_MAX_TOK ${ENG_MAX_TOK}). Those last two are estimates for this pre-flight check; the engine prints its measured figures once loaded," \
          "including the large lookup table it reads from disk and never holds. MemAvailable now ${avail_gib} GiB."
   fi
@@ -157,6 +160,8 @@ PY
 }
 
 gtt_note() {
+  local KV_PP=29500 KV_ROWS=26624
+  if [ "${HALOGEN_KV8:-}" = 1 ]; then KV_PP=16712; KV_ROWS=13832; fi
   local sys="${_hg_sys:-/sys}" f used="" total="" holders
   for f in "$sys"/class/drm/card*/device/mem_info_gtt_used; do
     [ -r "$f" ] || continue
@@ -172,7 +177,7 @@ gtt_note() {
   local need_gib arena_gib
   arena_gib=$(work_split | awk '{print $1}')
   need_gib=$(awk -v s="$ENG_SLOTS" -v c="$ENG_CTX" -v p="$ENG_POOL" -v pool="${HALOGEN_KV_POOL:-1}" -v a="$arena_gib" \
-    'BEGIN{printf "%.1f", (pool=="0"?s*c*26624:p*29500+s*120586240)/1073741824 + a}')
+    -v pp="$KV_PP" -v rr="$KV_ROWS" 'BEGIN{printf "%.1f", (pool=="0"?s*c*rr:p*pp+s*120586240)/1073741824 + a}')
   local used_gib total_gib free_gib
   used_gib=$(awk -v u="$used" 'BEGIN{printf "%.1f", u/1073741824}')
   total_gib=$(awk -v t="$total" 'BEGIN{printf "%.1f", t/1073741824}')

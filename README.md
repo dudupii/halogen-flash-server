@@ -56,9 +56,9 @@ a quality trade. Since 0.6.0 there are two draft sources, the model's own
 draft head and the request's own text (prompt lookup), and the guarantee
 covers both.
 
-0.18.8: a long conversation keeps its prompt cache when many short ones arrive in between (its next turn starts in
-about a second instead of about 100 s), and Claude Code and Codex subagents reuse the project context; speed and
-output otherwise unchanged. [Measured](docs/performance.md#measured).
+0.18.9: an opt-in 8-bit KV cache (`HALOGEN_KV8=1`) nearly halves the attention cache's memory for a small decode
+cost, and three reported issues are fixed; at the defaults, speed and output are unchanged.
+[Measured](docs/performance.md#measured).
 
 Since 0.7.0 the engine also opens a **llama.cpp GGUF** of this model directly:
 point it at the file you already have (unsloth's `UD-IQ4_XS`, say) and it
@@ -105,7 +105,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.8
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.9
 ```
 
 One condition first: **set the BIOS carve-out (UMA frame buffer) to its

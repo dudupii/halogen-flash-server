@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.18.9
+
+An opt-in 8-bit KV cache, and fixes for three reported issues. The Flash checkpoints are unchanged.
+At the defaults, decode and prefill speed are unchanged, and at temperature 0 the output is still
+byte-identical to serial greedy decode.
+
+### Added
+
+- **An 8-bit KV cache, opt-in** (#142, asked by @apartje, with measurements from @jane-alesi and
+  @pugant). `HALOGEN_KV8=1` keeps the attention cache's keys and values in 8 bits instead of 16.
+  The default 524,288-position pool then takes about 8.2 GiB instead of 14.4, or
+  `HALOGEN_KV_POOL_POSITIONS=925184` fits in the memory the default pool took before. Perplexity
+  moved by -0.3% to +0.5% on both checkpoints, and retrieval of planted facts at 128k and 250k
+  tokens scored the same as the 16-bit cache. Prefill speed is unchanged. Decode is 0.2 to 0.6%
+  slower on short contexts and 1.7 to 1.9% slower with a 32k context (serial greedy decode on our
+  two machines). With drafting on, the text itself can differ from the 16-bit cache's, and a
+  reply's speed then moves with how well that text drafts. It cannot be combined with
+  `HALOGEN_COMPOSABLE_CONTEXT=1`, and `/health` reports the cache's format as `kv_cache`.
+
+### Fixed
+
+- **The engine could loop without end while making room in the KV pool** (#190, reported by
+  @byspy). With `HALOGEN_FORK` keeping a handle and `HALOGEN_COMPOSABLE_CONTEXT=1`, a request that
+  needed more room than the pool had kept trying to free a region the kept handle still held,
+  until the watchdog restarted the engine. The request now waits for room instead, and its wait
+  line says how many positions kept handles hold. They are freed when the handle is released or
+  idle past `HALOGEN_FORK_TTL_S`.
+- **A second GPU stopped the server from starting** (#188, reported by @thvk-beta). With another
+  GPU attached, the engine chose the Strix Halo GPU but failed at its first kernel launch. When
+  ROCm shows more than one GPU and no visibility variable is set, the engine now restarts itself
+  with only the chosen GPU visible, which is what the reporter's working `HIP_VISIBLE_DEVICES`
+  setting did by hand. Setting that variable yourself still wins. We have no two-GPU machine, so
+  this restart has not run on one here.
+- **An NPU answer with a non-finite number returned an HTTP 500.** The server now runs that request
+  once more and, if the answer is still not finite, returns a clean error.
+
+### Changed
+
+- **Image edits accept the sizes generations serve** (#189, requested by @xuyongroger). A frontend
+  that keeps one image-size setting for both routes no longer gets a 400 from
+  `/v1/images/edits`. Edits still come out at 512x512, and the response's `size` says so.
+
 ## 0.18.8
 
 Long conversations keep their prompt cache, and a coding agent's subagents reuse the project
