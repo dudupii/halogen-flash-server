@@ -2,6 +2,7 @@
 # halogen-flash-server: source shipped as-is, comments stripped. The README is the documentation.
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
@@ -15,6 +16,11 @@ if os.environ.get("HALOGEN_API_KEY", "").strip():
 
 FILLER = ("The unified memory architecture changes how inference engines "
           "schedule work across the accelerator and the host processor. ")
+FILLER_WORDS = FILLER.split()
+
+def lead_line(i):
+    k = 1 + i % (len(FILLER_WORDS) - 1)
+    return " ".join(FILLER_WORDS[k:]) + " "
 
 def post(api, body, timeout=1800):
     req = urllib.request.Request(api + "/v1/chat/completions",
@@ -32,7 +38,7 @@ def ask(api, prompt, max_tokens, drafter, effort):
         body["drafter"] = drafter
     return post(api, body)
 
-def build_prompt(api, target_tokens, effort, cache):
+def build_prompt(api, target_tokens, effort, cache, lead="x"):
     if "overhead" not in cache:
         d, _ = ask(api, "x", 1, None, effort)
         cache["overhead"] = d["usage"]["prompt_tokens"]
@@ -40,7 +46,14 @@ def build_prompt(api, target_tokens, effort, cache):
         cache["per_unit"] = max(
             1e-6, (d["usage"]["prompt_tokens"] - cache["overhead"]) / 20.0)
     need = max(0, target_tokens - cache["overhead"])
-    return "x" + FILLER * max(1, round(need / cache["per_unit"]))
+    k = max(1, round(need / cache["per_unit"]))
+    if lead != "x":
+        if ("lead", lead) not in cache:
+            d, _ = ask(api, lead + FILLER, 1, None, effort)
+            cache[("lead", lead)] = d["usage"]["prompt_tokens"] - cache["per_unit"]
+        extra = max(0, cache[("lead", lead)] - cache["overhead"])
+        k = max(1, k - math.ceil(extra / cache["per_unit"]))
+    return lead + FILLER * k
 
 def main():
     ap = argparse.ArgumentParser(
@@ -101,13 +114,19 @@ def main():
     for drafter in drafters:
         dname = drafter or health.get("drafter_default", "default")
 
-        for target in pps:
-            prompt = build_prompt(a.api, target, a.effort, cache)
+        for ti, target in enumerate(pps):
             samples, actual = [], None
-            for _ in range(a.reps):
+            for rep in range(a.reps):
+                prompt = build_prompt(a.api, target, a.effort, cache,
+                                      lead=lead_line(ti * a.reps + rep))
                 d, wall = ask(a.api, prompt, 1, drafter, a.effort)
                 actual = d["usage"]["prompt_tokens"]
                 samples.append(actual / wall)
+                hit = (d.get("timings") or {}).get("cache_n", 0) or 0
+                if hit:
+                    notes.append("pp%d request %d: %d of %d tokens came from "
+                                 "the prompt cache, so that cell is not cold"
+                                 % (target, rep + 1, hit, actual))
             rows.append(("pp%d" % target, dname, samples, actual))
 
         for target in tgs:

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.18.10
+
+Prompts process a little faster, and a reported fault with sampled structured output is fixed.
+The Flash checkpoints are unchanged. At temperature 0 the output is byte-identical to 0.18.9's
+and to serial greedy decode.
+
+### Fixed
+
+- **A sampled reply to a recursive schema could take the server down** (#192, reported by
+  @okaros). At temperature 1.0 the model sometimes nests a recursive schema's value past the
+  structured-output depth limit (a family tree 16 generations deep), and at the limit no token
+  was legal, so the engine failed with a GPU fault or a 400. Near the limit the grammar now
+  offers only the closing brackets, so the reply stays valid JSON, and a schema whose smallest
+  value is deeper than the limit is refused up front with the reason. An invalid token can no
+  longer reach the GPU on any path.
+
+### Changed
+
+- **Prompts process faster** at every length, on both checkpoints, and the first request of a
+  new conversation with the prompt cache on (the default) no longer waits for its cache memory
+  to be prepared.
+- **The image's `sweep` measures the cache-on case cold.** Its requests no longer share a first
+  line with its own calibration request, which the prompt cache used to serve, so a cache-on
+  `sweep` now reads a few percent lower than the same server did under 0.18.9's `sweep`. The
+  cache-off figures stay about the same.
+
 ## 0.18.9
 
 An opt-in 8-bit KV cache, and fixes for three reported issues. The Flash checkpoints are unchanged.

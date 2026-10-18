@@ -56,8 +56,7 @@ a quality trade. Since 0.6.0 there are two draft sources, the model's own
 draft head and the request's own text (prompt lookup), and the guarantee
 covers both.
 
-0.18.9: an opt-in 8-bit KV cache (`HALOGEN_KV8=1`) nearly halves the attention cache's memory for a small decode
-cost, and three reported issues are fixed; at the defaults, speed and output are unchanged.
+0.18.10: prompts process a little faster, and a reported structured-output fault is fixed; output unchanged.
 [Measured](docs/performance.md#measured).
 
 Since 0.7.0 the engine also opens a **llama.cpp GGUF** of this model directly:
@@ -105,7 +104,7 @@ podman run --rm -p 8731:8731 \
   --ipc=host --ulimit memlock=-1:-1 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.9
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.10
 ```
 
 One condition first: **set the BIOS carve-out (UMA frame buffer) to its
