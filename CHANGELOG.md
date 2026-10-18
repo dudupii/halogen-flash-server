@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.18.11
+
+Three or four requests at once decode faster, and two Decision 3.0 models run on the NPU, pictures
+included. The Flash checkpoints are unchanged. At temperature 0 each reply is byte-identical to
+0.18.10's, to the same request alone and to serial greedy decode.
+
+### Added
+
+- **Decision 3.0 on the NPU.** `d3-lite` and `d3-nano` (vLLM Semantic Router's 0.8B and 2B decision
+  models) run on the NPU beside the Flash model: name them in `HALOGEN_NPU_MODELS` and ask System One
+  questions on `/v1/systemone` (a choice of up to 255 options, a yes or no, a score), about a text of
+  up to 8,192 tokens and, optionally, one picture. Their answers match the models' own runtime.
+  See docs/NPU.md.
+
+### Changed
+
+- **Three or four requests generating at once decode faster.** They now draft together and one step
+  checks every draft, as two requests already did, while that pays. Greedy replies are unchanged.
+  `HALOGEN_SPEC_GROUP=0` turns it off.
+- **A quieter console.** A successful `/health` or `/metrics` request, as a dashboard or a health
+  check polls them, no longer prints a line. Every other request, and any failed one, still does.
+  `HALOGEN_ACCESS_LOG=all` prints every request as before; `off` prints none.
+
+### Fixed
+
+- **Drafting after the prompt cache moved a conversation.** When the cache moved a long conversation
+  to make room, the draft head lost a little of that conversation's context, so it drafted worse
+  for the rest of the request and decoded a little slower. Replies were never affected.
+
 ## 0.18.10
 
 Prompts process a little faster, and a reported fault with sampled structured output is fixed.

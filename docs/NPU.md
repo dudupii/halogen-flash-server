@@ -6,6 +6,9 @@ Eight kinds of model run there:
 
 - **Decisions** with `decider-0.8b` (a Qwen3.5-0.8B classifier). Give a text and a question with 2 to 10 options, and
   get a probability for every option from one pass.
+- **Decisions over the whole prompt, pictures included,** with `d3-lite` and `d3-nano` (vLLM Semantic Router's Decision 3.0,
+  0.8B and 2B). Ask a choice of up to 255 options, a yes or no, or a score about a text and a picture, and get a probability for
+  every answer.
 - **Embeddings** with `qwen3-embedding-0.6b`, or with `embeddinggemma-2` (EmbeddingGemma 2) for text, pictures and
   sound in one space.
 - **Reranking** with `qwen3-reranker-0.6b`. Score documents against a query.
@@ -58,7 +61,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_NPU_MODELS=decider-0.8b,qwen3-embedding-0.6b,qwen3-reranker-0.6b,qwen3guard-gen-0.6b,qwen3.5-2b \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.11
 ```
 
 `HALOGEN_DOWNLOAD` fetches the files of the NPU models that `HALOGEN_NPU_MODELS` names, into `/models/npu`, and the
@@ -143,6 +146,71 @@ questions then reads the text once. With `HALOGEN_NPU_DEC_RESUME=2`, a later req
 one also reuses that work (a text that arrives with one question is kept from its second time on). The answers are the
 same as without it. It is off by default. It keeps up to `HALOGEN_NPU_DEC_ENTRIES` texts (6), and each kept text holds
 memory on the host until it is replaced.
+
+## Decision 3.0
+
+`d3-lite` and `d3-nano` run vLLM Semantic Router's Decision 3.0 models on the NPU. They are not in the default list: name them
+in `HALOGEN_NPU_MODELS`, and they are fetched and served like the others. They speak their own System One contract on
+`POST /v1/systemone`:
+
+```bash
+curl -s localhost:8731/v1/systemone -H 'content-type: application/json' -d '{
+  "model": "d3-lite",
+  "state": "Customer: I was charged twice and nobody answers my emails.",
+  "questions": {
+    "team": {"type": "choice", "instructions": "Which team should handle this?",
+             "criteria": {"billing": "payments and refunds", "technical": "bugs and errors", "other": null}},
+    "refund": {"type": "noul", "instructions": "Does the customer ask for a refund?"},
+    "anger": {"type": "score", "instructions": "How frustrated is the customer?",
+              "criteria": ["calm", "annoyed", "furious"]}}}'
+```
+
+- A `choice` takes 1 to 255 options (each a key, with an optional description); a `noul` is a yes or no; a `score` an ordered list
+  of 2 or more levels. The answers have the same shape as the other decision models' System One answers.
+- The `state` can be a string, or an object or array (sent as JSON). It can be empty.
+- `model` can also be `vllm-sr/d3-lite` or `vllm-sr/d3-nano`, the upstream names; the reply names the model as asked.
+- Each question is one pass over the whole prompt. These models read the prompt in both directions, so a stored text is never
+  reused between questions (`HALOGEN_NPU_DEC_RESUME` does not apply to them).
+- Prompts go up to 8,192 tokens.
+
+### With a picture
+
+Add `images`, a list of one picture, and every question in the request is asked about the picture and the `state` together:
+
+```bash
+curl -s localhost:8731/v1/systemone -H 'content-type: application/json' -d @- <<EOF
+{"model": "d3-nano",
+ "images": ["data:image/png;base64,$(base64 < shelf.png | tr -d '\n')"],
+ "state": "A photo from the warehouse camera.",
+ "questions": {
+   "empty": {"type": "noul", "instructions": "Is any shelf in the picture empty?"},
+   "boxes": {"type": "choice", "instructions": "How many boxes are on the top shelf?",
+             "criteria": {"none": null, "one to three": null, "four or more": null}}}}
+EOF
+```
+
+- The picture is a `data:` URL (`data:image/png;base64,...`, or JPEG, WebP and the other common formats), plain base64, or an
+  object `{"url": ...}` / `{"image_url": {"url": ...}}` holding one. The server does not fetch picture URLs.
+- One picture a request. It is scaled, keeping its shape, to between 256 x 256 and 768 x 768 worth of pixels; a larger one is
+  scaled down, so small text in a large screenshot may not survive. A picture more than 200 times wider than tall (or taller than
+  wide) is refused.
+- A request reads its picture once, however many questions it asks.
+
+| | d3-lite | d3-nano |
+|---|---|---|
+| base | Qwen3.5-0.8B | Qwen3.5-2B |
+| files on disk, the picture reader included | 2.5 GB | 3.0 GB |
+| a question, short state | ~80 ms | ~110 ms |
+| at 600 tokens | ~190 ms | ~320 ms |
+| at 3,500 tokens | ~650 ms | ~1.1 s |
+| a question with a picture, 256 x 256 / 768 x 768 | ~0.2 s / ~0.5 s | ~0.35 s / ~0.9 s |
+
+One Strix Halo, one question a request, served alone, the request's wall (HTTP included), with one of the two loaded. Loaded
+together they share the NPU's memory, and `d3-nano`'s questions about pictures take 15 to 25% longer.
+
+Their answers match the models' own runtime on the CPU: on text, the same answer on 509 and 502 of 512 questions of our decision
+benchmark; with pictures, on 63 and 64 of 64 questions of a public vision benchmark (CV-Bench). The rest were near ties. `d3-nano`
+gives better answers on harder questions; `d3-lite` is the faster.
 
 ## Embeddings
 
@@ -425,10 +493,10 @@ changes no result.
 - The streaming guard watches the first 2,048 tokens of the user's last message and the reply.
 - A generation prompt is up to 16,384 tokens (its template counts). The prompt and its answer share 18,432 positions,
   so an answer stops there at the latest.
-- A decision takes 2 to 10 options.
+- A decision takes 2 to 10 options (`d3-lite` and `d3-nano`: 1 to 255).
 - A transcription takes a WAV file of up to 20 minutes or 25 MiB.
 - With several large NPU models loaded (a speech model, `embeddinggemma-2`, `wemm-embedding-4b`, images above
-  512x512), they take turns at the NPU's memory. Alternating them is slower, and a request that cannot fit answers 503.
+  512x512, `d3-lite` and `d3-nano` together), they take turns at the NPU's memory. Alternating them is slower, and a request that cannot fit answers 503.
 - The NPU models are served in the default mode only, not in the two-container setup (`engine` and `api`).
 
 <a id="host"></a>

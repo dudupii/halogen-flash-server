@@ -169,15 +169,15 @@ shown as a range where they differ.
 Every stream emits byte-identical tokens to the same request run alone,
 which is gated on every release (see the identity properties under
 [Quality](quality.md#quality-what-is-measured-and-what-is-not)). One stream
-alone drafts from both the draft head and the request's own text; two
-streams generating together both draft with the head in one forward pass
-while that pays, and decode as a plain batch when it does not; at four and
-eight streams a batched step is the cheapest way to get one token per stream
-on this hardware. (An earlier table, from 0.6.0 on the 0.14 checkpoint with
+alone drafts from both the draft head and the request's own text; two to
+four streams generating together all draft with the head and one forward pass
+checks every draft while that pays (three and four since 0.18.11), and decode
+as a plain batch when it does not; at eight streams a batched step is the
+cheapest way to get one token per stream on this hardware. (An earlier table, from 0.6.0 on the 0.14 checkpoint with
 1,500-token prose prompts, read 41.3 / 55.2 / 74.8 / 87.8 tok/s at one / two
-/ four / eight streams.) A request with a JSON schema decodes in the plain batch;
-with three or more generating it joins the batch, so it never holds the
-others back. Prompt lookup drafts only for a conversation generating alone.
+/ four / eight streams.) A request with a JSON schema decodes in the plain batch,
+and the requests generating beside it then do too, so it never holds them
+back. Prompt lookup drafts only for a conversation generating alone.
 
 **Slots are a latency policy, not a memory decision.** Raising
 `HALOGEN_KV_SLOTS` past four trades what each client sees for admitting more
@@ -527,7 +527,7 @@ podman run --rm --name halogen -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -v ~/halogen-models:/models \
   -v ~/halogen-records:/records -e HALOGEN_RECORD_DIR=/records \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.10
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.11
 ```
 
 The startup log then says `request records ON in /records`, with the text

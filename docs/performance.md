@@ -6,6 +6,20 @@ checkpoint a machine, with the conditions each table names. Decode depends
 on how predictable the text is: quote the row for the kind of text you
 run, never one number for all of them.
 
+## 0.18.11 against 0.18.10
+
+The published 0.18.11 image at its defaults (prompt cache on unless a row says otherwise, thinking off), each row an A/B pair on one machine in one session, the same machines as the 0.18.10 table below; 0.18.10 is the left figure of each pair:
+
+| | v2 | ht43 |
+|---|---|---|
+| `bench` with drafting over ten prompt shapes, greedy, mean | 64.1 / 64.2 tok/s | 65.2 / 65.0 tok/s |
+| prefill cache off, 8,192 / 32,768 | 1,835 / 1,784 vs 1,836 / 1,785 | 1,766 / 1,811 vs 1,766 / 1,814 |
+| prefill cache on (cold), 8,192 / 32,768 | 1,751 / 1,811 vs 1,752 / 1,811 | 1,747 / 1,809 vs 1,747 / 1,809 |
+| three requests at once, greedy code, total | 74.6 / 91.6 tok/s | 72.7 / 88.8 tok/s |
+| four requests at once, greedy code, total | 85.3 / 103.0 tok/s | 83.7 / 99.4 tok/s |
+
+The last two rows compare 0.18.11 with `HALOGEN_SPEC_GROUP=0` (0.18.10's way of decoding three or four requests; the device code is the same) against its default, on two further machines of the same kind for each checkpoint: each request its own short prompt, 384 tokens, the prompt cache off, the mean of two server starts on each machine. Sampled prose (temperature 0.7) gains 13 to 14% at three requests and 9 to 10% at four; one, two, six and eight requests decode as before.
+
 ## 0.18.10 against 0.18.9
 
 The published 0.18.10 image at its defaults (prompt cache on unless a row says otherwise, thinking off), each row an A/B pair on one machine in one session, the same machines as the 0.18.9 table below; 0.18.9 is the left figure of each pair:
@@ -296,8 +310,8 @@ produced byte-identical output on every case**, on both checkpoints.
 Reproduce the numbers with the benchmarks baked into the image:
 
 ```bash
-podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.10 bench serial,mtp 256 low 3
-podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.10 sweep -p 8192,32768 -n 128
+podman run ... ghcr.io/peonist-ai/halogen-flash-server:0.18.11 bench serial,mtp 256 low 3
+podman run ... -e HALOGEN_PROMPT_CACHE=0 ghcr.io/peonist-ai/halogen-flash-server:0.18.11 sweep -p 8192,32768 -n 128
 ```
 
 Run the sweep with the prompt cache off, as above. It repeats one prompt per

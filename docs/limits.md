@@ -4,10 +4,10 @@
   (`HALOGEN_KV_SLOTS`, up to 64) and a request waits for a free slot and for
   room in the pool; there is no preemption and no paging. Throughput past four
   streams grows slowly.
-- **Speculation is for one or two conversations.** With exactly two
-  generating, both speculate together in one forward pass while that pays.
-  With three or more, every stream takes a batched step, and the drafter
-  resumes when two or fewer remain.
+- **Speculation is for up to four conversations.** With two to four
+  generating, they speculate together in one forward pass while that pays.
+  With five or more (`HALOGEN_KV_SLOTS` above four), every stream takes a
+  batched step, and the drafter resumes when four or fewer remain.
 - **No response store.** `/v1/responses` generates and streams; it does not
   keep responses, so `previous_response_id`, retrieval by id and cancellation
   by id are not available. **Cancellation is by disconnect** (since 0.10.2;
