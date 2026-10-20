@@ -18,7 +18,8 @@ Eight kinds of model run there:
 - **Text generation** with `qwen3.5-2b` (Qwen3.5-2B, thinking off). Summaries and other short jobs, beside the Flash
   model.
 - **Images** with `flux2-klein-4b` (FLUX.2-klein-4B). Icons, diagrams, illustrations and placeholders from 256x256 up
-  to 1024x1024, square or not, on `/v1/images/generations`, and edits of a picture you send on `/v1/images/edits`.
+  to 1024x1024, square or not, on `/v1/images/generations`, and edits of up to four pictures you send on
+  `/v1/images/edits`.
 - **Speech to text** with `qwen3-asr-0.6b` or `qwen3-asr-1.7b` (Qwen3-ASR). Recordings up to 20 minutes, on
   `/v1/audio/transcriptions`.
 
@@ -61,7 +62,7 @@ podman run --rm -p 8731:8731 \
   -e HALOGEN_DOWNLOAD=peonist-ai/halogen-qwen3.8-flash-next \
   -e HALOGEN_NPU_MODELS=decider-0.8b,qwen3-embedding-0.6b,qwen3-reranker-0.6b,qwen3guard-gen-0.6b,qwen3.5-2b \
   -v ~/halogen-models:/models \
-  ghcr.io/peonist-ai/halogen-flash-server:0.18.11
+  ghcr.io/peonist-ai/halogen-flash-server:0.18.12
 ```
 
 `HALOGEN_DOWNLOAD` fetches the files of the NPU models that `HALOGEN_NPU_MODELS` names, into `/models/npu`, and the
@@ -386,24 +387,37 @@ memory while it draws.
 
 ## Image edits
 
-With `flux2-klein-4b` loaded, `/v1/images/edits` changes a picture you send as you describe, and `/v1/images/variations`
-draws a new take on one. Both use OpenAI's multipart shape:
+With `flux2-klein-4b` loaded, `/v1/images/edits` changes the pictures you send as you describe, and
+`/v1/images/variations` draws a new take on one. Both use OpenAI's multipart shape:
 
 ```
 curl -s localhost:8731/v1/images/edits -F model=flux2-klein-4b -F image=@photo.png \
   -F prompt="turn it into a pencil sketch" -F seed=7
 ```
 
-- `image`: one picture, PNG, JPEG, WebP, GIF or BMP, up to 25 MiB. It is cropped to a square at its centre and scaled
-  to 512x512. Transparent parts become white.
+Several pictures go in one edit, for example a scene and an object to place in it. The prompt names them in the order
+they are sent:
+
+```
+curl -s localhost:8731/v1/images/edits -F model=flux2-klein-4b -F "image[]=@scene.png" -F "image[]=@cat.png" \
+  -F prompt="put the cat from image 2 on the bench in image 1, matching its light" -F seed=7
+```
+
+- `image`: one to four pictures (`image` or `image[]`, repeated), PNG, JPEG, WebP, GIF or BMP, each up to 25 MiB. Four
+  is the model's limit, and a fifth is refused. Each is cropped to a square at its centre and scaled to 512x512.
+  Transparent parts become white. A variation takes one picture.
 - `prompt`: the change, in words. An edit needs one. A variation takes none: it is the picture under an empty
   instruction, and each `seed` gives another one.
 - `mask` is refused. The model edits by instruction, so describe the part to change in the prompt.
-- `size`: `512x512`, `auto`, or any size generations serve. Every edit comes out at 512x512 and the response's `size`
-  says so, so a client that keeps one size setting for both routes can edit what it generated.
+- `size`: `512x512`, `1024x1024`, `auto`, or any size generations serve. An edit comes out at 512x512, or at 1024x1024
+  when that size is asked for with one picture. The response's `size` says which, so a client that keeps one size
+  setting for both routes can edit what it generated.
 - `n` (one to four), `response_format` (`b64_json` or `url`), `output_format` (`png`) and `seed` work as they do for
   generations. A `model` that is not one of the server's own (OpenAI's `gpt-image-1`, say) reaches the loaded image
   model.
+
+An edit takes about 5 seconds with one picture, 7.5 with two, 10 with three and 12.5 with four, and about 12.5
+seconds at 1024x1024.
 
 ## Speech to text
 
@@ -489,7 +503,8 @@ changes no result.
 - A decision is up to 8,192 tokens, its questions and the model's own template included, and so is an
   `embeddinggemma-2` text, its prompt included. Every other input is up to 4,096 tokens, a rerank pair or a moderation
   prompt included (the model's own template counts). A longer one is refused with a 400 that says so.
-- An `embeddinggemma-2` audio clip is up to 30 seconds. An image edit takes one picture and comes out at 512x512.
+- An `embeddinggemma-2` audio clip is up to 30 seconds. An image edit takes one to four pictures and comes out at
+  512x512, or at 1024x1024 with one picture.
 - The streaming guard watches the first 2,048 tokens of the user's last message and the reply.
 - A generation prompt is up to 16,384 tokens (its template counts). The prompt and its answer share 18,432 positions,
   so an answer stops there at the latest.

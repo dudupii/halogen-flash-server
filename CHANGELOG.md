@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.18.12
+
+Prompts and generation run a little faster, every NPU model starts its work sooner, and image edits
+take up to four pictures. The Flash checkpoints are unchanged. At temperature 0 each reply is
+byte-identical to 0.18.11's and to serial greedy decode. This image needs the NPU model files it
+fetches for it (see Changed).
+
+### Added
+
+- **Image edits with up to four pictures** (towards #179, requested by @leng45-cpu).
+  `/v1/images/edits` takes one to four `image` parts, for example a scene and an object to place in
+  it, and the prompt names them as image 1 to image 4 in the order sent. Four is the model's limit.
+  An edit with one picture can also come out at 1024x1024. See docs/NPU.md.
+- **`halogen:gpu_queues_evicted_seconds_total` in `/metrics`**, and `evicted_ms` on each request
+  line: the seconds the kernel driver held the engine's GPU queues evicted because the host moved
+  memory the GPU maps (compaction or reclaim). Every request in flight stalls for them. Shown only
+  on a host that reports it.
+- **`HALOGEN_ADMIT_SPLICE_MS`, opt-in.** Keeps replies that are already streaming moving while
+  another request's long prompt is read in. Off by default. See docs/FLAGS.md.
+
+### Changed
+
+- **Faster.** Prompts process faster on both checkpoints, a step that checks
+  several drafts at once launches less work, and a host running with the IOMMU off reads ahead
+  during generation. See docs/performance.md for the measured figures.
+- **Every NPU model starts its work sooner.** All the shipped NPU model sets were republished with
+  a faster start-up path on the NPU. Every kind of NPU request is faster, from about 2 percent
+  (a 1024x1024 image) to about 36 percent (a picture question) when warm, and the answers are
+  unchanged. This image fetches the new sets by itself (`HALOGEN_DOWNLOAD`), and the new sets need
+  0.18.12 or later; an older image keeps fetching the sets it was released with.
+- **The prompt cache's copies go through a pinned staging buffer** (`HALOGEN_CACHE_STAGE=2`, the
+  default). When the host moves memory the GPU maps, the driver pauses every GPU queue; this
+  halves that lost time in our tests. Replies are unchanged. `HALOGEN_CACHE_STAGE=0` restores the
+  previous copies.
+
 ## 0.18.11
 
 Three or four requests at once decode faster, and two Decision 3.0 models run on the NPU, pictures

@@ -157,6 +157,7 @@ this server unchanged. Beside them sit halogen's own counters.
 | `halogen:cache_disk_cut_back_total` | times the disk tier trimmed a conversation's files back to where its next request resumed, instead of writing a second copy |
 | `halogen:engine_up`, `halogen:busy_for_seconds`, `halogen:build_info` | liveness: the probe `/health` reports; how long the oldest request has run; the build |
 | `halogen:cache_stats_age_seconds` | how old the cache numbers are |
+| `halogen:gpu_queues_evicted_seconds_total` | seconds the kernel driver held the engine's GPU queues evicted because the host moved memory the GPU maps (compaction or reclaim); every request in flight stalls for them. Present only on a host that reports it |
 
 A scrape never stalls on a busy engine: the cache numbers are the engine's
 last report, refreshed in the background, and `cache_stats_age_seconds`
